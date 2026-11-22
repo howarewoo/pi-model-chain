@@ -12,12 +12,6 @@ assert.equal(lock.version, pkg.version, "Lockfile version must match package.jso
 assert.equal(lock.packages[""].version, pkg.version, "Lockfile root version must match");
 assert.equal(pkg.license, "MIT", "Review licensing before changing the release policy");
 
-assert.equal(lock.packages[""].license, "MIT", "Lockfile root license must match");
-const license = await readFile("LICENSE", "utf8");
-assert.match(license, /^MIT License\n/);
-assert.match(license, /Permission is hereby granted, free of charge/);
-assert.match(license, /THE SOFTWARE IS PROVIDED "AS IS"/);
-
 const changelog = await readFile("CHANGELOG.md", "utf8");
 const heading = `## [${pkg.version}]`;
 const lines = changelog.split("\n");

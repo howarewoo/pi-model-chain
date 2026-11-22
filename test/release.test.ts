@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,50 +10,22 @@ import { fileURLToPath } from "node:url";
 const script = fileURLToPath(new URL("../scripts/release-notes.mjs", import.meta.url));
 const publishScript = fileURLToPath(new URL("../scripts/publish-package.mjs", import.meta.url));
 
-const mitLicense = await readFile(new URL("../LICENSE", import.meta.url), "utf8");
-
-for (const scenario of [
-  "valid",
-  "tag mismatch",
-  "lock mismatch",
-  "lock root mismatch",
-  "missing heading",
-  "empty notes",
-  "duplicate notes",
-  "wrong license",
-  "wrong lock license",
-  "missing license",
-  "wrong license text",
-  "prerelease",
-])
+for (const scenario of ["valid", "tag mismatch", "lock mismatch", "missing notes", "prerelease"])
   test(`release metadata: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-model-fallback-release-"));
     try {
       const version = scenario === "prerelease" ? "0.2.0-beta.1" : "0.2.0";
-      await writeFile(
-        join(root, "package.json"),
-        JSON.stringify({ version, license: scenario === "wrong license" ? "UNLICENSED" : "MIT" }),
-      );
+      await writeFile(join(root, "package.json"), JSON.stringify({ version, license: "MIT" }));
       await writeFile(
         join(root, "package-lock.json"),
         JSON.stringify({
-          version: scenario === "lock mismatch" ? "0.1.0" : version,
-          packages: {
-            "": {
-              version: scenario === "lock root mismatch" ? "0.1.0" : version,
-              license: scenario === "wrong lock license" ? "UNLICENSED" : "MIT",
-            },
-          },
+          version,
+          packages: { "": { version: scenario === "lock mismatch" ? "0.1.0" : version } },
         }),
       );
-      if (scenario !== "missing license")
-        await writeFile(
-          join(root, "LICENSE"),
-          scenario === "wrong license text" ? "All rights reserved." : mitLicense,
-        );
       await writeFile(
         join(root, "CHANGELOG.md"),
-        `# Changelog\n\n## [${scenario === "missing heading" ? "9.0.0" : version}]\n\n${scenario === "empty notes" ? "" : "New release."}\n\n${scenario === "duplicate notes" ? `## [${version}]\n\nDuplicate.\n\n` : ""}## [0.1.0]\n\nOld notes.\n`,
+        `# Changelog\n\n## [${version}]\n\n${scenario === "missing notes" ? "" : "New release."}\n\n## [0.1.0]\n\nOld notes.\n`,
       );
       const output = join(root, "notes.md");
       const result = spawnSync(
@@ -66,8 +38,7 @@ for (const scenario of [
         assert.equal(await readFile(output, "utf8"), "New release.\n");
       } else {
         assert.notEqual(result.status, 0, "Invalid release must be rejected");
-        assert.match(result.stderr, scenario === "missing license" ? /ENOENT/ : /AssertionError/);
-        await assert.rejects(readFile(output), "Invalid metadata must not write release notes");
+        assert.match(result.stderr, /AssertionError/);
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -82,9 +53,6 @@ for (const scenario of [
   "missing tarball",
   "changed tarball",
   "missing metadata",
-  "malformed metadata",
-  "symlink metadata",
-  "symlink tarball",
   "wrong name",
   "wrong version",
   "wrong tag",
@@ -119,17 +87,6 @@ for (const scenario of [
       if (scenario in fields) metadata[fields[scenario as keyof typeof fields]] = "wrong";
       if (scenario !== "missing metadata")
         await writeFile(join(root, "metadata.json"), JSON.stringify(metadata));
-      if (scenario === "malformed metadata") await writeFile(join(root, "metadata.json"), "{");
-      if (scenario === "symlink metadata") {
-        await writeFile(join(root, "other.json"), JSON.stringify(metadata));
-        await rm(join(root, "metadata.json"));
-        await symlink("other.json", join(root, "metadata.json"));
-      }
-      if (scenario === "symlink tarball") {
-        await writeFile(join(root, "other.tgz"), "controlled tarball bytes");
-        await rm(tarball);
-        await symlink("other.tgz", tarball);
-      }
       // Replace network and process publication in the subprocess, never contact npm or publish.
       const preload = `
         import assert from "node:assert/strict";

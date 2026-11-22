@@ -5,45 +5,59 @@ Prepare deliberate releases of `@howarewoo/pi-model-fallback` from
 publish. Ordinary main pushes do not publish. Local checks do not establish GitHub
 protection, npm ownership, OIDC provenance or a consumer release.
 
-## Owner prerequisites — before any release trigger
+## One-time owner setup
 
-Independently verify external controls before publishing:
+`@howarewoo/pi-model-fallback` has **not been published to npm yet**. A repository owner and
+an npm package owner must complete these steps before the first release. They are not
+performed by this repository's files, CI or local scripts.
 
-- Protect `main`: PR required, zero approving reviews, dismiss stale approvals,
-  resolve conversations, enforce for admins, and require only GitHub Actions
-  `check (24)` (app ID `15368`, not strict/up-to-date). Establish a real passing
-  check first. PR-title validation is not an additional required check.
-- Restrict creation, update and deletion of `refs/tags/v*` with an active tag
-  ruleset; only `howarewoo` (User `25625745`) bypasses, in `always` mode.
-- Environment `npm` must require `howarewoo` approval, allow self-review and
-  admin bypass, and allow deployments only from tags matching `v*`, not branches.
-  The YAML environment declaration alone does not create approval protection.
-- Preserve read-only default Actions permissions and disabled PR-review approval.
+1. **Confirm npm scope rights.** Your npm account must be able to publish
+   `@howarewoo/pi-model-fallback` in the `@howarewoo` scope, with two-factor authentication.
+2. **Protect GitHub.** Independently verify the external controls:
+   - Protect `main`: PR required, zero approving reviews, dismiss stale approvals, resolve
+     conversations, enforce for admins, and require the GitHub Actions checks
+     `check (22.19.0)` and `check (24)` (app ID `15368`, not strict/up-to-date). Establish
+     a real passing run of each check first. PR-title validation is not an additional
+     required check.
+   - Restrict creation, update and deletion of `refs/tags/v*` with an active tag ruleset;
+     only `howarewoo` (User `25625745`) bypasses, in `always` mode.
+   - Environment `npm` must require `howarewoo` approval, allow self-review and admin
+     bypass, and allow deployments only from tags matching `v*`, not branches. The YAML
+     environment declaration alone does not create approval protection: GitHub can
+     create an unprotected environment when a job references a new name.
+   - Preserve read-only default Actions permissions and disabled PR-review approval.
 
-Recheck actual settings before every release rather than treating repository files
-or a prior setup report as proof that controls remain enabled.
+   Recheck actual settings before every release rather than treating repository files or
+   a prior setup report as proof that controls remain enabled.
 
-An npm package owner must confirm scope/package rights and determine any required
-first-publication bootstrap. **Account/bootstrap and trusted-publisher setup remain
-deferred; release activation is blocked until they are verified.** Do not assume
-that a missing public package can be created by the first OIDC run. No token
-fallback is provided.
+3. **Bootstrap the package with the first manual publish** described in
+   [First npm publish only](#first-npm-publish-only). A trusted publisher is normally
+   configured from an existing package's settings, so do not assume the first
+   tag-triggered run can create a new npm package.
+4. **Configure npm Trusted Publishing.** In **`@howarewoo/pi-model-fallback` → Settings →
+   Trusted publishing**, add GitHub Actions with:
 
-Configure the npm trusted publisher for exactly:
+   | Field                | Value               |
+   | -------------------- | ------------------- |
+   | Organization or user | `howarewoo`         |
+   | Repository           | `pi-model-fallback` |
+   | Workflow filename    | `release.yml`       |
+   | Environment name     | `npm`               |
 
-| Field                | Value               |
-| -------------------- | ------------------- |
-| Organization or user | `howarewoo`         |
-| Repository           | `pi-model-fallback` |
-| Workflow filename    | `release.yml`       |
-| Environment name     | `npm`               |
+   Permit direct `npm publish` if npm presents an allowed-actions selector. The workflow
+   uses GitHub-hosted runners and `id-token: write`; no `NPM_TOKEN` secret is needed and
+   no token fallback is provided. Use npm 11.5.1 or newer for OIDC publishing (the
+   release runner uses Node 24).
 
-Use GitHub-hosted runners and permit direct `npm publish`. Node 24 is required here;
-npm OIDC requires npm >=11.5.1. Follow [npm's current trusted publishing rules](https://docs.npmjs.com/trusted-publishers/),
-including validation/expiry windows (currently first successful publication within
-two days of creating a binding). Create the binding near an explicitly authorized
-release. `npm whoami` does not test OIDC. A manual bootstrap, if needed and separately
-authorized, is not workflow OIDC/provenance proof.
+5. Follow npm's current validation/expiry rules when creating the trusted publisher; create
+   it near the next release. After successful OIDC publication, restrict traditional
+   token-based publishing and revoke unused automation tokens. Public GitHub/OIDC
+   publication supplies npm provenance automatically.
+
+See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/) for
+current account requirements and troubleshooting. Do not use `npm whoami` to test OIDC: it
+does not validate trusted publishing permissions. The manual bootstrap is not workflow
+OIDC/provenance proof.
 
 ## Contributor titles and compatibility
 
@@ -65,8 +79,10 @@ The maintainer chooses the next stable version and reviews compatibility and mig
 guidance before release. Stable versions only publish to npm `latest`; prereleases
 need a separately agreed channel policy.
 
-Node >=24 and Pi **1.5.2** are the tested baseline. Wildcard host peers are not proof
-of compatibility with other Pi versions. Keep the extension entrypoint `./src/index.ts`.
+Node >=22.19.0 and Pi **1.6.0** are the tested baseline. CI runs every check on Node
+22.19.0 and Node 24 with pinned Pi 1.6.0 development packages, not an implied matrix of
+all Pi versions. Wildcard host peers are not proof of compatibility with other Pi
+versions. Keep the root extension entrypoint `./index.ts`, which re-exports `src/index.ts`.
 Do not introduce a subagents dependency; `test:coexistence` is an optional local check
 requiring `PI_SUBAGENTS_CHECKOUT`, and a skip is not coexistence evidence.
 
@@ -96,7 +112,7 @@ Missing/nonancestor tags, shallow history, empty ranges, unstable versions and e
 target headings fail before writing. Fetch history or fix inputs; never move tags or
 delete reviewed notes just to regenerate. Review compatibility and README examples.
 
-Run from the repository root on Node 24:
+Run from the repository root on Node 22.19.0 or newer:
 
 ```sh
 npm ci --ignore-scripts
@@ -106,16 +122,16 @@ npm run test:package
 ```
 
 `check` runs lint, formatting, typechecking and deterministic config/SDK/release/helper
-tests. `release:check` checks stable tag/manifest/lockfile agreement, MIT licensing and
+tests. `release:check` checks stable tag/manifest/lockfile agreement, the MIT license field and
 one exact nonempty version heading. `test:package` packs and installs into a disposable
-clean consumer without bundled host peers or install scripts, loads with real Pi 1.5.2,
+clean consumer without bundled host peers or install scripts, loads with real Pi 1.6.0,
 and exercises controlled fallback recovery. No live provider calls are made.
 
 To verify an already-packed artifact without repacking:
 
 ```sh
 release_dir="$(mktemp -d)"
-npm pack --ignore-scripts --pack-destination "$release_dir"
+npm pack --pack-destination "$release_dir"
 npm run test:package -- "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz"
 ```
 
@@ -123,9 +139,34 @@ Replace the version for subsequent releases. Retain reviewed bytes until verific
 is complete. Submit version/notes as a reviewed release PR; local commands do not merge,
 tag or publish anything.
 
+## First npm publish only
+
+One-time bootstrap for `0.1.0`, the first release. Do not repeat it for later versions;
+use the tag-triggered workflow after verifying the owner setup above. Run it only with
+explicit release authorization.
+
+After the release commit is merged, check out its exact clean commit and run the local
+gates above. Use an npm account with publishing rights and two-factor authentication:
+
+```sh
+npm login
+release_dir="$(mktemp -d)"
+npm pack --pack-destination "$release_dir"
+npm run test:package -- "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz"
+npm publish "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz" --access public --ignore-scripts
+```
+
+Inspect the result with `npm view @howarewoo/pi-model-fallback@0.1.0 version dist.integrity`.
+Keep the tarball until verified, then remove the temporary directory. This interactive
+bootstrap is separate from GitHub OIDC and does not claim GitHub provenance. Configure the
+trusted publisher before pushing the release tag. The workflow accepts an already-published
+version only when its registry SHA-512 integrity matches the newly verified tarball byte for
+byte. A later `v0.1.0` tag run continues only if its rebuilt tarball is byte-identical;
+otherwise it stops without republishing, and the next version uses the workflow.
+
 ## Separately authorized tag and publication
 
-Only after owner prerequisites and explicit release authorization, create an immutable
+Only after the owner setup and explicit release authorization, create an immutable
 `vX.Y.Z` tag on the exact merged release commit. Never move a release tag. The workflow
 accepts `v*` tag pushes or manual dispatch on an existing release tag; branch dispatch
 cannot publish. It serializes releases without canceling active publication.
@@ -153,7 +194,7 @@ tests are not proof that publication or that installed-user walkthrough occurred
 
 ## Recover failures
 
-- **Before npm publication:** resolve the failure or owner prerequisite, then rerun the
+- **Before npm publication:** resolve the failure or owner setup step, then rerun the
   same immutable tag. A code fix needs a new release commit/version, not a moved tag.
 - **npm succeeded, GitHub release failed:** rerun failed jobs or dispatch the same existing
   tag. The helper skips republishing only for identical registry SHA-512. Registry errors

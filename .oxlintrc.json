@@ -3,13 +3,5 @@
   "plugins": ["typescript", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"
-  },
-  "overrides": [
-    {
-      "files": ["test/**/*.ts"],
-      "rules": {
-        "no-control-regex": "off"
-      }
-    }
-  ]
+  }
 }

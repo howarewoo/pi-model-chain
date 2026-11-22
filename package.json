@@ -1,11 +1,22 @@
 {
   "name": "@howarewoo/pi-model-fallback",
   "version": "0.1.0",
-  "description": "Independent, branch-persisted model fallback chains for Pi coding agent",
+  "description": "Pi extension for named model fallback chains with bounded retries, sticky backups and branch-persisted state.",
   "keywords": [
-    "pi-package"
+    "fallback",
+    "model-fallback",
+    "model-routing",
+    "pi-coding-agent",
+    "pi-extension",
+    "pi-package",
+    "retry"
   ],
+  "homepage": "https://github.com/howarewoo/pi-model-fallback#readme",
+  "bugs": {
+    "url": "https://github.com/howarewoo/pi-model-fallback/issues"
+  },
   "license": "MIT",
+  "author": "Adam Woo",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/howarewoo/pi-model-fallback.git"
@@ -22,15 +33,15 @@
     "access": "public"
   },
   "scripts": {
-    "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
     "test": "node --test test/config.test.ts test/sdk-gate.test.ts test/release.test.ts test/changelog.test.ts test/coexistence.test.ts",
-    "test:package": "node scripts/test-package.mjs",
-    "test:coexistence": "node --test test/coexistence.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings .",
     "lint:fix": "npm run lint -- --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
+    "test:package": "node scripts/test-package.mjs",
+    "test:coexistence": "node --test test/coexistence.test.ts",
     "release:check": "node scripts/release-notes.mjs",
     "changelog:generate": "node scripts/generate-changelog.mjs",
     "pr-title:check": "node scripts/check-pr-title.mjs"
