@@ -86,3 +86,16 @@ test("status text is readable, marks each step and never dumps JSON", () => {
   assert.match(formatStatus({ chains: [] })[0], /No chains configured/);
   assert.match(formatStatus({ chains: ["work"], problem: "boom" }).join("\n"), /Problem: boom/);
 });
+
+test("saving through a symlinked config replaces the target and keeps the link", async (t) => {
+  if (process.platform === "win32") return;
+  const { dir, path } = await directory(t);
+  const { symlink, lstat } = await import("node:fs/promises");
+  const target = join(dir, "dotfiles-model-chain.json");
+  const raw = await writeConfigFile(target, work, undefined);
+  await symlink(target, path);
+  const next: Config = { version: 1, chains: { solo: [work.chains.work[0]] } };
+  const written = await writeConfigFile(path, next, raw);
+  assert.ok((await lstat(path)).isSymbolicLink(), "the link is preserved");
+  assert.equal(await readFile(target, "utf8"), written);
+});

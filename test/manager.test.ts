@@ -11,7 +11,9 @@ const sonnet = { provider: "anthropic", model: "claude-sonnet-4-5", effort: "hig
 const gpt = { provider: "openai", model: "gpt-4.1", effort: "off" } as const;
 const mini = { provider: "openai", model: "o4-mini", effort: "low" } as const;
 
-function manager(options: { idle?: boolean; active?: string; height?: number } = {}) {
+function manager(
+  options: { idle?: boolean; active?: string; height?: number; failRead?: boolean } = {},
+) {
   let config: Config = { version: 1, chains: { work: [sonnet, gpt], cheap: [mini] } };
   let raw = "initial";
   const calls: string[] = [];
@@ -27,7 +29,10 @@ function manager(options: { idle?: boolean; active?: string; height?: number } =
   const snapshot = (): ManagerSnapshot => ({ config, raw, views: views() });
   const component = createChainManager(
     {
-      read: async () => snapshot(),
+      read: async () => {
+        if (options.failRead) throw new Error("model-chain.json is not valid JSON");
+        return snapshot();
+      },
       catalog: () => catalog,
       idle: () => options.idle ?? true,
       async save(next, expected) {
@@ -210,4 +215,11 @@ test("narrow widths keep every line inside the frame", async () => {
   }
   assert.match(text(manager().render(30)), /Too small/);
   assert.match(text(manager({ height: 6 }).render(80)), /Too small/);
+});
+
+test("a failed re-read after saving becomes a notice, not an unhandled rejection", async () => {
+  const m = manager({ failRead: true });
+  await m.send(KEY.down, KEY.ctrl("d"), "y");
+  assert.equal(m.saved.length, 1);
+  assert.match(text(m.render()), /not valid JSON/);
 });

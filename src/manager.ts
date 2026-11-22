@@ -189,22 +189,20 @@ export function createChainManager(
     const chains = { ...snapshot.config.chains };
     if (draft.original) delete chains[draft.original];
     chains[name] = draft.steps.map((step) => ({ ...step }));
-    run(
-      () => deps.save({ version: 1, chains }, snapshot.raw),
-      () => {
-        draft = undefined;
-        mode = "list";
-        search.setValue("");
-        void reload(`Saved ${name}`).then(() => {
-          selected = Math.max(
-            0,
-            snapshot.views.findIndex((view) => view.name === name),
-          );
-          syncFocus();
-          requestRender();
-        });
-      },
-    );
+    // Saving and the re-read both run under `busy`, so keys never act on a stale snapshot and a
+    // failed re-read becomes a notice instead of an unhandled rejection.
+    run(async () => {
+      await deps.save({ version: 1, chains }, snapshot.raw);
+      draft = undefined;
+      mode = "list";
+      search.setValue("");
+      await reload(`Saved ${name}`);
+      selected = Math.max(
+        0,
+        snapshot.views.findIndex((view) => view.name === name),
+      );
+      syncFocus();
+    });
   };
   const syncFocus = () => {
     search.focused = focused && mode === "list";
@@ -404,10 +402,10 @@ export function createChainManager(
           else {
             const chains = { ...snapshot.config.chains };
             delete chains[view.name];
-            run(
-              () => deps.save({ version: 1, chains }, snapshot.raw),
-              () => void reload(`Deleted ${view.name}`).then(requestRender),
-            );
+            run(async () => {
+              await deps.save({ version: 1, chains }, snapshot.raw);
+              await reload(`Deleted ${view.name}`);
+            });
           }
         }
         syncFocus();

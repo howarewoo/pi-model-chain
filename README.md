@@ -307,7 +307,8 @@ can be installed together, and neither changes the other's chain behavior:
   `chain/<name>` virtual models and the `/chain`, `/chain-status` and `/chain-reset`
   commands, and registers no tools. Child profile chains come from pi-subagents'
   `delegation.json` and belong to pi-subagents. Neither extension uses global state or the
-  other's event-bus channels, and this extension never calls `setModel`.
+  other's event-bus channels. This extension never switches models while routing; it calls
+  `setModel` only on the main session, and only when you select a chain in `/chain`.
 - **Separate resets.** `/chain-reset` never changes a child's chain, and pi-subagents'
   `delegate_coordinate reset_fallback` never changes the parent chain. Neither sends a
   model request.
