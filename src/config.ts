@@ -15,11 +15,11 @@ const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 function keys(value: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(value).some((key) => !allowed.includes(key)))
-    throw new Error("Unknown model-fallback configuration field");
+    throw new Error("Unknown model-chain configuration field");
 }
 export function parseConfig(value: unknown): Config {
   if (!object(value) || value.version !== 1 || !object(value.chains))
-    throw new Error("Expected model-fallback version 1 and named chains");
+    throw new Error("Expected model-chain version 1 and named chains");
   keys(value, ["version", "chains"]);
   const chains: Record<string, Target[]> = Object.create(null);
   for (const [name, entries] of Object.entries(value.chains)) {

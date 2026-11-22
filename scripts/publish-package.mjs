@@ -23,7 +23,7 @@ const pkg = JSON.parse(await readFile(metadataPath, "utf8"));
 assert.deepEqual(
   pkg,
   {
-    name: "@howarewoo/pi-model-fallback",
+    name: "@howarewoo/pi-model-chain",
     version: tag.slice(1),
     tag,
     commit,
