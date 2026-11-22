@@ -98,4 +98,11 @@ test("saving through a symlinked config replaces the target and keeps the link",
   const written = await writeConfigFile(path, next, raw);
   assert.ok((await lstat(path)).isSymbolicLink(), "the link is preserved");
   assert.equal(await readFile(target, "utf8"), written);
+  // Deleting the last chain removes the target and leaves a dangling link; the next save
+  // recreates the target instead of replacing the link.
+  assert.equal(await writeConfigFile(path, { version: 1, chains: {} }, written), undefined);
+  assert.ok((await lstat(path)).isSymbolicLink());
+  const again = await writeConfigFile(path, work, undefined);
+  assert.ok((await lstat(path)).isSymbolicLink(), "a dangling link is written through");
+  assert.equal(await readFile(target, "utf8"), again);
 });

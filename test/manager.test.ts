@@ -133,6 +133,10 @@ test("edit, replace and remove steps; Escape keeps unsaved edits until confirmed
   const m = manager();
   await m.send(KEY.ctrl("e"));
   assert.match(text(m.render()), /Edit chain work/);
+  await m.send(KEY.ctrl("s"));
+  assert.deepEqual(Object.keys(m.saved[0].chains), ["work", "cheap"], "editing keeps file order");
+  m.saved.length = 0;
+  await m.send(KEY.ctrl("e"));
   await m.send(KEY.down, "x");
   assert.ok(!text(m.render()).includes("gpt-4.1"));
   await m.send(KEY.enter); // replace the remaining step through the picker

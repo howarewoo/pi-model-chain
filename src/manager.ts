@@ -186,9 +186,16 @@ export function createChainManager(
       notice = "Saving requires an idle session";
       return;
     }
-    const chains = { ...snapshot.config.chains };
-    if (draft.original) delete chains[draft.original];
-    chains[name] = draft.steps.map((step) => ({ ...step }));
+    // Keep the file's chain order: an edited or renamed chain stays in place.
+    const steps = draft.steps.map((step) => ({ ...step }));
+    const original = draft.original;
+    const chains = original
+      ? Object.fromEntries(
+          Object.entries(snapshot.config.chains).map(([key, value]) =>
+            key === original ? [name, steps] : [key, value],
+          ),
+        )
+      : { ...snapshot.config.chains, [name]: steps };
     // Saving and the re-read both run under `busy`, so keys never act on a stale snapshot and a
     // failed re-read becomes a notice instead of an unhandled rejection.
     run(async () => {

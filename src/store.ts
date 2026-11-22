@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { readFile, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { readFile, readlink, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseConfig, type Config } from "./config.ts";
 
 export const emptyConfig = (): Config => ({ version: 1, chains: Object.create(null) });
@@ -37,10 +37,12 @@ export async function writeConfigFile(
   config: Config,
   expected: string | undefined,
 ): Promise<string | undefined> {
-  // Replace a symlinked config's target (for example a dotfiles checkout), not the link itself.
-  const path = await realpath(link).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return link;
-    throw error;
+  // Replace a symlinked config's target (for example a dotfiles checkout), not the link itself,
+  // including a dangling link whose target was removed.
+  const path = await realpath(link).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    const target = await readlink(link).catch(() => undefined);
+    return target === undefined ? link : resolve(dirname(link), target);
   });
   const current = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
