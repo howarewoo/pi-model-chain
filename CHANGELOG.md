@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [0.1.0]
+
+First release. Requires Node 22.19+; tested host is Pi 1.6.0. Host peer dependencies are
+wildcards by Pi's package format, not a compatibility promise.
 
 - Add standalone named `fallback/<chain>` virtual selections with explicit
   operator-owned provider/model/effort chains and native Pi authentication.
