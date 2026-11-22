@@ -7,7 +7,7 @@ target. A working backup stays selected for later turns until you manually reset
 
 This is a standalone main-thread extension: it neither imports nor reads the
 configuration or state of a subagent extension. Physical model selections keep
-normal Pi behavior. Tested with **Pi 1.5.2 and Node.js 24**; compatibility with other
+normal Pi behavior. Tested with **Pi 1.6.0 on Node.js 22.19.0 and 24**; compatibility with other
 Pi versions and live provider services is not established by these tests.
 
 ## Install and configure
@@ -159,7 +159,7 @@ npm test
 npm run test:package
 ```
 
-Dependencies are pinned to the authoritative registry's Pi 1.5.2 baseline. The SDK
+Dependencies are pinned to the authoritative registry's Pi 1.6.0 baseline. The SDK
 suite uses scripted in-process providers and temporary agent/session directories,
 not live models. It retains the original mixed quota→transient regression that
 previously dispatched A/A/A/A/B; it now asserts A/A/A/B. Additional cases cover
@@ -169,7 +169,7 @@ branch reset/reload/compaction/resume, concurrent isolation and read-only direct
 calls. The image-modality test disables native auto-resize to isolate routing.
 
 The package check packs an npm tarball, installs it without duplicate host SDKs,
-uses real Pi 1.5.2 `install` and `/model` catalogue discovery under a temporary agent
+uses real Pi 1.6.0 `install` and `/model` catalogue discovery under a temporary agent
 directory, then runs A/A/A/B recovery through the installed package in offline
 print mode. It changes only temporary settings and cleans them up. The smaller
 `test/recovery-probe.ts` is a public-API checkpoint fixture, not shipped runtime.
@@ -188,7 +188,7 @@ is skipped without the environment variable; it is not part of required standalo
 CI.
 
 Observed against `pi-subagents` commit
-`64db91266549e156cbfccd9779b7cfed7b4737b4`: parent A/A/A/B, then a real
+`64db91266549e156cbfccd9779b7cfed7b4737b4` with Pi 1.6.0: parent A/A/A/B, then a real
 `delegate_task` invocation dispatching the profile-owned C/C/C/D, followed by B.
 Parent reset leaves the retained child on D; child reset restores C without
 resetting parent B or dispatching a provider request. A subsequent parent request
@@ -196,6 +196,8 @@ still uses B. Provider streams are controlled, not paid calls. This is a real
 local-source coexistence scenario, not a broad installed-version compatibility
 matrix. The package has no subagent dependency or routing bridge; each policy
 remains independently owned. No paid-provider uptime/account smoke test is claimed.
+Later `pi-subagents` releases replaced `/subagent-fallback-reset` with the subagent
+hub, so the fixture's child-reset step requires that revision or an equivalent one.
 
 ## Repository and licensing
 

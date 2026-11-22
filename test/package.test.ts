@@ -15,7 +15,7 @@ function exec(command: string, args: string[], options: ExecFileOptionsWithStrin
 }
 const cli = resolve('node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js');
 
-test('tarball installs without host copies and loads/runs in real Pi 1.5.2', { timeout: 60_000 }, async () => {
+test('tarball installs without host copies and loads/runs in real Pi 1.6.0', { timeout: 60_000 }, async () => {
   const temp = await mkdtemp(join(tmpdir(), 'fallback-package-'));
   try {
     const agent = join(temp, 'agent');
@@ -24,12 +24,13 @@ test('tarball installs without host copies and loads/runs in real Pi 1.5.2', { t
     await mkdir(consumer);
     const packed = await exec('npm', ['pack', '--json', '--pack-destination', temp]);
     const metadata = JSON.parse(packed.stdout)[0] as { filename: string; files: Array<{ path: string }> };
+    assert.ok(metadata.files.some(file => file.path === 'index.ts'));
     assert.ok(metadata.files.some(file => file.path === 'src/index.ts'));
     assert.ok(!metadata.files.some(file => file.path.includes('node_modules') || file.path.startsWith('test/')));
     await exec('npm', ['install', '--prefix', consumer, '--ignore-scripts', '--omit=dev', '--legacy-peer-deps', join(temp, metadata.filename)]);
     const installed = join(consumer, 'node_modules/@howarewoo/pi-model-fallback');
     const manifest = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
-    assert.deepEqual(manifest.pi.extensions, ['./src/index.ts']);
+    assert.deepEqual(manifest.pi.extensions, ['./index.ts']);
     assert.equal(manifest.dependencies, undefined);
     await assert.rejects(readFile(join(consumer, 'node_modules/@earendil-works/pi-coding-agent/package.json')));
     const env = { ...process.env, PI_CODING_AGENT_DIR: agent };
