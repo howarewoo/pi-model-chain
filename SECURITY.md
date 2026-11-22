@@ -23,6 +23,8 @@ configuration you control. It reads `model-chain.json` from the Pi agent directo
 project files cannot add or reorder destinations. Do not put credentials in that file:
 unknown fields, including secret-like fields, are rejected, and authentication stays with
 Pi's native provider configuration.
+The `/chain` manager writes only that file, atomically and with owner-only permissions,
+refuses to overwrite a file that changed on disk, and never stores credentials.
 
 ## Chain destinations
 
