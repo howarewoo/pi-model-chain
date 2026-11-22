@@ -13,7 +13,7 @@ export function recoveryProbe(pi: ExtensionAPI, backoffMs = 1, onBackoff?: () =>
       : { active: "a", failures: 0, pending: false };
   };
   pi.registerVirtualModel({
-    provider: "fallback",
+    provider: "chain",
     id: "probe",
     name: "SDK probe",
     async route(request, ctx) {

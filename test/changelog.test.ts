@@ -39,7 +39,7 @@ function generate(root: string, ...args: string[]) {
 
 test("generates grouped first-parent notes, breaking guidance and preserved curated/history bytes", async () => {
   await fixture(async (root, git) => {
-    git("commit", "--allow-empty", "-m", "feat(fallback): add status (#70)");
+    git("commit", "--allow-empty", "-m", "feat(chain): add status (#70)");
     git("switch", "-c", "topic");
     git("commit", "--allow-empty", "-m", "feat: branch-only detail");
     git("switch", "main");
@@ -65,7 +65,7 @@ test("generates grouped first-parent notes, breaking guidance and preserved cura
     assert.match(preview.stdout, /### Breaking changes[\s\S]*drain tasks first\n  then restart/);
     assert.match(
       preview.stdout,
-      /### Features\n\n- feat\(fallback\): add status \(#70\) \([a-f0-9]{12}\)/,
+      /### Features\n\n- feat\(chain\): add status \(#70\) \([a-f0-9]{12}\)/,
     );
     assert.match(preview.stdout, /### Fixes and performance/);
     assert.match(preview.stdout, /### Other changes\n\n- Legacy subject \(#72\)/);
@@ -91,7 +91,7 @@ test("conventional parser and title command reject malformed titles without exec
   ]) {
     assert.equal(
       spawnSync(process.execPath, [titleCheck], {
-        env: { ...process.env, PR_TITLE: `${type}(fallback)!: change (#1)` },
+        env: { ...process.env, PR_TITLE: `${type}(chain)!: change (#1)` },
       }).status,
       0,
     );

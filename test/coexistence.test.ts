@@ -23,8 +23,8 @@ const subagents = resolve(
   process.env.PI_SUBAGENTS_CHECKOUT ?? "node_modules/@howarewoo/pi-subagents",
   "index.ts",
 );
-const fallbackEntry = resolve("index.ts");
-const STATE = "model-fallback.state.v1";
+const chainEntry = resolve("index.ts");
+const STATE = "model-chain.state.v1";
 
 interface Child {
   id: string;
@@ -52,8 +52,8 @@ const userText = (context: Context) => {
 };
 
 // Parent targets are a/b, the subagent profile chain is c/d. A and C always fail.
-async function start(options: { fallback: boolean; subagents: boolean }): Promise<Run> {
-  const root = await mkdtemp(join(tmpdir(), "fallback-coexistence-"));
+async function start(options: { chain: boolean; subagents: boolean }): Promise<Run> {
+  const root = await mkdtemp(join(tmpdir(), "chain-coexistence-"));
   const agentDir = join(root, "agent");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const dispatches: string[] = [];
@@ -73,7 +73,7 @@ async function start(options: { fallback: boolean; subagents: boolean }): Promis
     await mkdir(agentDir);
     process.env.PI_CODING_AGENT_DIR = agentDir;
     await writeFile(
-      join(agentDir, "model-fallback.json"),
+      join(agentDir, "model-chain.json"),
       JSON.stringify({
         version: 1,
         chains: {
@@ -155,7 +155,7 @@ async function start(options: { fallback: boolean; subagents: boolean }): Promis
       noPromptTemplates: true,
       noContextFiles: true,
       additionalExtensionPaths: [
-        ...(options.fallback ? [fallbackEntry] : []),
+        ...(options.chain ? [chainEntry] : []),
         ...(options.subagents ? [subagents] : []),
       ],
       extensionFactories: [
@@ -187,7 +187,7 @@ async function start(options: { fallback: boolean; subagents: boolean }): Promis
         errors.push(error);
       },
     });
-    if (options.fallback) await session.setModel(runtime.getModel("fallback", "parent")!);
+    if (options.chain) await session.setModel(runtime.getModel("chain", "parent")!);
     const active = session;
     return {
       dispatches,
@@ -243,22 +243,22 @@ const settledChild = (run: Run) => {
 };
 
 test(
-  "pi-model-fallback and pi-subagents fallback chains stay independent when both load",
+  "pi-model-chain chains and pi-subagents profile fallback chains stay independent",
   { timeout: 90_000 },
   async () => {
     // Baselines: each extension alone, with identical providers and scripts.
-    const fallbackAlone = await start({ fallback: true, subagents: false });
-    let fallbackBaseline: string[];
+    const chainAlone = await start({ chain: true, subagents: false });
+    let chainBaseline: string[];
     try {
-      fallbackBaseline = await fallbackAlone.prompt("fall back");
-      assert.deepEqual(fallbackBaseline, ["a", "a", "a", "b"]);
-      assert.deepEqual(fallbackAlone.parentState(), { index: 1, failures: 0, exhausted: false });
-      assert.deepEqual(fallbackAlone.errors, []);
+      chainBaseline = await chainAlone.prompt("fall back");
+      assert.deepEqual(chainBaseline, ["a", "a", "a", "b"]);
+      assert.deepEqual(chainAlone.parentState(), { index: 1, failures: 0, exhausted: false });
+      assert.deepEqual(chainAlone.errors, []);
     } finally {
-      await fallbackAlone.close();
+      await chainAlone.close();
     }
 
-    const subagentsAlone = await start({ fallback: false, subagents: true });
+    const subagentsAlone = await start({ chain: false, subagents: true });
     let delegateBaseline: string[];
     let childBaseline: Child;
     try {
@@ -273,10 +273,10 @@ test(
       await subagentsAlone.close();
     }
 
-    const both = await start({ fallback: true, subagents: true });
+    const both = await start({ chain: true, subagents: true });
     try {
       // Parent recovery is unchanged by pi-subagents.
-      assert.deepEqual(await both.prompt("fall back"), fallbackBaseline);
+      assert.deepEqual(await both.prompt("fall back"), chainBaseline);
       assert.deepEqual(both.parentState(), { index: 1, failures: 0, exhausted: false });
 
       // The child's profile chain switches exactly as it does alone, and the parent's
@@ -285,21 +285,21 @@ test(
       assert.deepEqual(delegated, delegateBaseline);
       const child = settledChild(both);
       assert.deepEqual(behavior(child), behavior(childBaseline));
-      // Child sessions load no ambient extensions: no pi-model-fallback state or routing.
+      // Child sessions load no ambient extensions: no pi-model-chain state or routing.
       const transcript = await readFile(
         String((child as Child & { transcript?: string }).transcript),
         "utf8",
       );
       assert.ok(transcript.includes("child recovered on D"));
       assert.ok(
-        !transcript.includes("model-fallback"),
-        "child transcript must not contain fallback state",
+        !transcript.includes("model-chain"),
+        "child transcript must not contain model-chain state",
       );
       // Child failures never reach the parent chain's budget or position.
       assert.deepEqual(both.parentState(), { index: 1, failures: 0, exhausted: false });
 
       // Each reset affects only its own chain and sends no model request.
-      assert.deepEqual(await both.prompt("/fallback-reset"), []);
+      assert.deepEqual(await both.prompt("/chain-reset"), []);
       assert.deepEqual(both.parentState(), { index: 0, failures: 0, exhausted: false });
       assert.equal(both.children.at(-1)?.fallback?.index, 1, "parent reset must not reset child D");
 

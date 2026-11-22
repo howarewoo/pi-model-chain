@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { fingerprint, identity, type Config } from "./config.ts";
 
-const ENTRY = "model-fallback.state.v1";
+const ENTRY = "model-chain.state.v1";
 const RETRIES = 2;
 interface State {
   version: 1;
@@ -61,9 +61,9 @@ function hasImages(messages: readonly Message[]): boolean {
   );
 }
 
-export function installFallback(pi: ExtensionAPI, config: Config) {
+export function installChain(pi: ExtensionAPI, config: Config) {
   const selected = (ctx: ExtensionContext) =>
-    ctx.model?.provider === "fallback" && config.chains[ctx.model.id] ? ctx.model.id : undefined;
+    ctx.model?.provider === "chain" && config.chains[ctx.model.id] ? ctx.model.id : undefined;
   const fresh = (chain: string): State => ({
     version: 1,
     chain,
@@ -97,14 +97,14 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
       typeof state.pendingDelay !== "boolean" ||
       !Array.isArray(state.skipped)
     )
-      throw new Error("Invalid persisted fallback state; manual reset required");
+      throw new Error("Invalid persisted chain state; manual reset required");
     if (
       !allowMismatch &&
       (state.fingerprint !== fingerprint(config.chains[chain]) ||
         !config.chains[chain][state.index] ||
         state.target !== identity(config.chains[chain][state.index]))
     )
-      throw new Error("Fallback chain changed; manual reset required");
+      throw new Error("Model chain changed; manual reset required");
     return state;
   }
   const save = (state: State) => pi.appendEntry(ENTRY, state);
@@ -116,7 +116,7 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
       (retry?.provider?.maxRetries ?? 0) !== 0
     )
       throw new Error(
-        "Fallback requires retry.enabled=true, retry.maxRetries=2 and retry.provider.maxRetries=0; settings were not changed",
+        "Model chains require retry.enabled=true, retry.maxRetries=2 and retry.provider.maxRetries=0; settings were not changed",
       );
   }
   function validate(ctx: ExtensionContext, chain: string) {
@@ -180,22 +180,22 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
   }
   for (const [chain, targets] of Object.entries(config.chains)) {
     pi.registerVirtualModel({
-      provider: "fallback",
+      provider: "chain",
       id: chain,
-      name: `Fallback: ${chain}`,
+      name: `Chain: ${chain}`,
       input: ["text", "image"],
       async route(request, ctx) {
         if (request.reason !== "direct") setup();
         validate(ctx, chain);
         let state = read(ctx, chain);
         const previous = state;
-        if (state.exhausted) throw new Error("Fallback chain exhausted; /fallback-reset required");
+        if (state.exhausted) throw new Error("Model chain exhausted; /chain-reset required");
         // Native retry counters can carry across targets or restart after a quota
         // continuation. The persisted physical-target budget is authoritative.
         if (request.reason !== "direct" && state.failures >= RETRIES + 1) {
           if (state.index + 1 === targets.length) {
             save({ ...state, exhausted: true, pendingDelay: false });
-            throw new Error("Fallback chain exhausted; /fallback-reset required");
+            throw new Error("Model chain exhausted; /chain-reset required");
           }
           state = {
             ...state,
@@ -212,7 +212,7 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
             !isContextOverflow(message, model?.contextWindow) &&
             !isRecoverableLength(message, model?.maxTokens ?? 0)
           )
-            throw new Error("Fallback stopped: failed response is not eligible for recovery");
+            throw new Error("Model chain stopped: failed response is not eligible for recovery");
         }
         if (request.reason !== "direct" && state.pendingDelay && request.reason !== "retry") {
           const retry = pi.getSettings().retry;
@@ -243,7 +243,7 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
               failures: previous.failures,
               pendingDelay: false,
             });
-          throw new Error("No available authorized fallback targets; /fallback-reset required");
+          throw new Error("No available authorized chain targets; /chain-reset required");
         }
         if (request.reason !== "direct") {
           const capabilities = targets
@@ -252,8 +252,8 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
             .map((model) => `${model.contextWindow}:${model.input.join(",")}`);
           if (!state.warnedCapabilities && new Set(capabilities).size > 1) {
             const warning =
-              "Fallback candidates differ in context/image capabilities. Native compaction may run; image-incompatible targets are skipped, not converted.";
-            pi.appendEntry("model-fallback.warning", { chain, warning });
+              "Chain targets differ in context/image capabilities. Native compaction may run; image-incompatible targets are skipped, not converted.";
+            pi.appendEntry("model-chain.warning", { chain, warning });
             if (ctx.hasUI) ctx.ui.notify(warning, "warning");
             state = { ...state, warnedCapabilities: true };
           }
@@ -350,12 +350,12 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
       continue: true,
     };
   });
-  pi.registerCommand("fallback-reset", {
-    description: "Reset the selected fallback chain on this idle branch (no model call)",
+  pi.registerCommand("chain-reset", {
+    description: "Reset the selected model chain on this idle branch (no model call)",
     handler: async (_args, ctx) => {
-      if (!ctx.isIdle()) throw new Error("Fallback reset requires an idle session");
+      if (!ctx.isIdle()) throw new Error("Chain reset requires an idle session");
       const chain = selected(ctx);
-      if (!chain) throw new Error("Select a fallback/<chain> model first");
+      if (!chain) throw new Error("Select a chain/<name> model first");
       validate(ctx, chain);
       const result = available(
         ctx,
@@ -367,8 +367,8 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
       report(ctx, { chain, state: result.state });
     },
   });
-  pi.registerCommand("fallback-status", {
-    description: "Show selected branch-local fallback state and setup",
+  pi.registerCommand("chain-status", {
+    description: "Show selected branch-local chain state and setup",
     handler: async (_args, ctx) => {
       const chain = selected(ctx);
       let problem: string | undefined;
@@ -397,7 +397,7 @@ export function installFallback(pi: ExtensionAPI, config: Config) {
     if (ctx.hasUI) ctx.ui.notify(content, "info");
     else
       pi.sendMessage(
-        { customType: "model-fallback.status", content, display: true },
+        { customType: "model-chain.status", content, display: true },
         { triggerTurn: false },
       );
   }

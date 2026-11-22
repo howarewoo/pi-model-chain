@@ -1,25 +1,25 @@
 {
-  "name": "@howarewoo/pi-model-fallback",
+  "name": "@howarewoo/pi-model-chain",
   "version": "0.1.0",
-  "description": "Pi extension for named model fallback chains with bounded retries, sticky backups and branch-persisted state.",
+  "description": "Pi extension for named model chains: ordered fallback targets with bounded retries, sticky backups and branch-persisted state.",
   "keywords": [
     "fallback",
-    "model-fallback",
+    "model-chain",
     "model-routing",
     "pi-coding-agent",
     "pi-extension",
     "pi-package",
     "retry"
   ],
-  "homepage": "https://github.com/howarewoo/pi-model-fallback#readme",
+  "homepage": "https://github.com/howarewoo/pi-model-chain#readme",
   "bugs": {
-    "url": "https://github.com/howarewoo/pi-model-fallback/issues"
+    "url": "https://github.com/howarewoo/pi-model-chain/issues"
   },
   "license": "MIT",
   "author": "Adam Woo",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/howarewoo/pi-model-fallback.git"
+    "url": "git+https://github.com/howarewoo/pi-model-chain.git"
   },
   "files": [
     "index.ts",

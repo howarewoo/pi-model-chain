@@ -22,7 +22,7 @@ const releaseScenarios = [
 ] as const;
 for (const scenario of releaseScenarios)
   test(`release metadata: ${scenario}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-model-fallback-release-"));
+    const root = await mkdtemp(join(tmpdir(), "pi-model-chain-release-"));
     try {
       const version = scenario === "prerelease" ? "0.2.0-beta.1" : "0.2.0";
       const manifest = {
@@ -96,13 +96,13 @@ for (const scenario of [
   "old npm",
 ])
   test(`publication recovery: ${scenario}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-model-fallback-publish-"));
+    const root = await mkdtemp(join(tmpdir(), "pi-model-chain-publish-"));
     try {
       const tarball = join(root, "release.tgz");
       await writeFile(tarball, "controlled tarball bytes");
       const integrity = `sha512-${createHash("sha512").update("controlled tarball bytes").digest("base64")}`;
       const metadata = {
-        name: "@howarewoo/pi-model-fallback",
+        name: "@howarewoo/pi-model-chain",
         version: "0.1.1",
         tag: "v0.1.1",
         commit: "a".repeat(40),
@@ -138,7 +138,7 @@ for (const scenario of [
         globalThis.fetch = async url => {
           console.log("CONTROLLED_FETCH");
           assert.ok(["new", "identical", "different", "registry error"].includes(${JSON.stringify(scenario)}), "Invalid artifact must fail before network access");
-          assert.equal(url, "https://registry.npmjs.org/%40howarewoo%2Fpi-model-fallback/0.1.1");
+          assert.equal(url, "https://registry.npmjs.org/%40howarewoo%2Fpi-model-chain/0.1.1");
           return {
             status: ${scenario === "new" ? 404 : scenario === "registry error" ? 503 : 200},
             json: async () => ({dist: {integrity: ${JSON.stringify(scenario === "different" ? "sha512-different" : integrity)}}})

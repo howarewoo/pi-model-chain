@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { recoveryProbe } from "./recovery-probe.ts";
 import { Type } from "typebox";
-import { installFallback } from "../src/fallback.ts";
+import { installChain } from "../src/chain.ts";
 import { parseConfig } from "../src/config.ts";
 
 const config = (models = ["a", "b"]) =>
@@ -31,7 +31,7 @@ async function fixture(
   observe: (pi: ExtensionAPI) => void,
   script?: (attempt: number) => "tool" | "partial" | "success" | "error" | "length",
 ) {
-  const dir = await mkdtemp(join(tmpdir(), "fallback-sdk-"));
+  const dir = await mkdtemp(join(tmpdir(), "chain-sdk-"));
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
     retry: { enabled: true, maxRetries: 2, baseDelayMs: 1, provider: { maxRetries: 0 } },
@@ -225,7 +225,7 @@ for (const error of ["insufficient_quota", "503 service unavailable"]) {
   test(`virtual boundary recovery dispatches A/A/A/B: ${error}`, async () => {
     const f = await fixture(error, (pi) => recoveryProbe(pi));
     try {
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("recover");
       assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
       await f.session.prompt("next request");
@@ -254,7 +254,7 @@ test("backoff runs in fresh router signal and abort prevents another physical di
   });
   const f = await fixture("insufficient_quota", (pi) => recoveryProbe(pi, 60_000, entered));
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     const running = f.session.prompt("recover");
     await waiting;
     await f.session.abort();
@@ -291,7 +291,7 @@ test("interrupted draft does not execute partial calls or replay a completed too
   const f = await fixture(
     "connection reset",
     (pi) => {
-      installFallback(pi, config());
+      installChain(pi, config());
       pi.registerTool({
         name: "counter",
         label: "Counter",
@@ -306,7 +306,7 @@ test("interrupted draft does not execute partial calls or replay a completed too
     (attempt) => (attempt === 1 ? "tool" : attempt <= 4 ? "partial" : "success"),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("perform one action");
     assert.deepEqual(f.calls, ["a", "a", "a", "a", "b"]);
     assert.equal(executions, 1);
@@ -326,7 +326,7 @@ test("interrupted draft does not execute partial calls or replay a completed too
 test("branch/reset routing survives reload; direct calls are read-only", async () => {
   let context: ExtensionContext | undefined;
   const f = await fixture("insufficient_quota", (pi) => {
-    installFallback(pi, config());
+    installChain(pi, config());
     pi.on("agent_before_settle", (_e, ctx) => {
       context = ctx;
     });
@@ -339,7 +339,7 @@ test("branch/reset routing survives reload; direct calls are read-only", async (
     }));
   });
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("recover");
     const backupLeaf = f.session.sessionManager.getLeafId()!;
     await f.session.reload();
@@ -349,7 +349,7 @@ test("branch/reset routing survives reload; direct calls are read-only", async (
     assert.deepEqual(reopened.getBranch(), f.session.sessionManager.getBranch());
     const before = f.session.sessionManager.getBranch().length;
     const direct = await context!.modelRegistry
-      .streamSimple(f.runtime.getModel("fallback", "probe")!, {
+      .streamSimple(f.runtime.getModel("chain", "probe")!, {
         messages: [{ role: "user", content: "direct", timestamp: Date.now() }],
       })
       .result();
@@ -358,7 +358,7 @@ test("branch/reset routing survives reload; direct calls are read-only", async (
     assert.equal(f.calls.at(-1), "b");
     assert.equal(f.session.sessionManager.getBranch().length, before);
     const count = f.calls.length;
-    await f.session.prompt("/fallback-reset");
+    await f.session.prompt("/chain-reset");
     assert.equal(f.calls.length, count);
     await f.session.prompt("reset branch");
     assert.deepEqual(f.calls.slice(count), ["a", "a", "a", "b"]);
@@ -383,15 +383,15 @@ for (const error of [
   '400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your usage limit."}}',
 ]) {
   test(`standalone controller implements bounded sticky recovery: ${error}`, async () => {
-    const f = await fixture(error, (pi) => installFallback(pi, config(["a", "missing", "b"])));
+    const f = await fixture(error, (pi) => installChain(pi, config(["a", "missing", "b"])));
     try {
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("recover");
       assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
       await f.session.prompt("stay on backup");
       assert.equal(f.calls.at(-1), "b");
       const count = f.calls.length;
-      await f.session.prompt("/fallback-reset");
+      await f.session.prompt("/chain-reset");
       assert.equal(f.calls.length, count);
       await f.session.prompt("primary again");
       assert.deepEqual(f.calls.slice(count), ["a", "a", "a", "b"]);
@@ -414,9 +414,9 @@ for (const error of [
   "content policy refusal: credit balance unavailable",
 ]) {
   test(`terminal failure never recovers: ${error}`, async () => {
-    const f = await fixture(error, (pi) => installFallback(pi, config()));
+    const f = await fixture(error, (pi) => installChain(pi, config()));
     try {
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("no recovery");
       assert.deepEqual(f.calls, ["a"]);
     } finally {
@@ -426,14 +426,14 @@ for (const error of [
 }
 
 test("chain exhaustion is latched; reset sends no call", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config(["a"])));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config(["a"])));
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("exhaust");
     assert.deepEqual(f.calls, ["a", "a", "a"]);
     await f.session.prompt("must not wrap");
     assert.equal(f.calls.length, 3);
-    await f.session.prompt("/fallback-reset");
+    await f.session.prompt("/chain-reset");
     assert.equal(f.calls.length, 3);
     await f.session.prompt("try again");
     assert.equal(f.calls.length, 6);
@@ -448,7 +448,7 @@ for (const priorFailure of [false, true]) {
     const f = await fixture(
       "503 service unavailable",
       (pi) => {
-        installFallback(pi, config());
+        installChain(pi, config());
         pi.on("session_before_compact", (event) => ({
           compaction: {
             summary: "Deterministic summary",
@@ -470,7 +470,7 @@ for (const priorFailure of [false, true]) {
       f.settings.applyOverrides({
         compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1024 },
       });
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("warmup");
       await f.session.prompt("recover a truncated response");
       assert.deepEqual(f.calls, ["a", "a", "a", "a", "a", "b"]);
@@ -484,7 +484,7 @@ for (const priorFailure of [false, true]) {
       );
       const state = branch
         .slice(lengthIndex + 1)
-        .find((e) => e.type === "custom" && e.customType === "model-fallback.state.v1");
+        .find((e) => e.type === "custom" && e.customType === "model-chain.state.v1");
       assert.ok(state?.type === "custom");
       assert.equal((state.data as { failures: number }).failures, priorFailure ? 1 : 0);
       assert.ok(!JSON.stringify(f.session.state.messages).includes("not eligible for recovery"));
@@ -497,11 +497,11 @@ for (const priorFailure of [false, true]) {
 test("success clears consecutive failures without selecting another model", async () => {
   const f = await fixture(
     "insufficient_quota",
-    (pi) => installFallback(pi, config()),
+    (pi) => installChain(pi, config()),
     (attempt) => (attempt === 3 || attempt === 6 ? "success" : "error"),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("recover on retry two");
     assert.deepEqual(f.calls, ["a", "a", "a"]);
     await f.session.prompt("fresh retry budget");
@@ -514,10 +514,10 @@ test("success clears consecutive failures without selecting another model", asyn
 test("mixed quota/transient episode retains a total of two same-model retries", async () => {
   const f = await fixture(
     (attempt) => (attempt === 1 ? "insufficient_quota" : "503 service unavailable"),
-    (pi) => installFallback(pi, config()),
+    (pi) => installChain(pi, config()),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("recover mixed failures");
     assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
   } finally {
@@ -535,11 +535,11 @@ for (const errors of [
     const f = await fixture(
       (attempt) =>
         errors[attempt - 1] === "quota" ? "insufficient_quota" : "503 service unavailable",
-      (pi) => installFallback(pi, config()),
+      (pi) => installChain(pi, config()),
       () => "error",
     );
     try {
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("exhaust every target");
       assert.deepEqual(f.calls, ["a", "a", "a", "b", "b", "b"]);
       await f.session.prompt("must remain exhausted");
@@ -565,11 +565,11 @@ for (const errors of [
 test("backup success resets its budget after inherited native retry counter", async () => {
   const f = await fixture(
     (attempt) => (attempt === 1 ? "insufficient_quota" : "503 service unavailable"),
-    (pi) => installFallback(pi, config()),
+    (pi) => installChain(pi, config()),
     (attempt) => (attempt === 6 || attempt === 9 ? "success" : "error"),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("backup recovers");
     assert.deepEqual(f.calls, ["a", "a", "a", "b", "b", "b"]);
     await f.session.prompt("backup gets a fresh budget");
@@ -584,7 +584,7 @@ for (const mode of ["steer", "followUp"] as const) {
     const f = await fixture(
       (attempt) => (attempt === 1 ? "insufficient_quota" : "503 service unavailable"),
       (pi) => {
-        installFallback(pi, config());
+        installChain(pi, config());
         let queued = false;
         pi.on("message_end", (event) => {
           if (!queued && event.message.role === "assistant") {
@@ -595,7 +595,7 @@ for (const mode of ["steer", "followUp"] as const) {
       },
     );
     try {
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("original instruction");
       assert.deepEqual(
         f.calls,
@@ -621,7 +621,7 @@ test("standalone abort during quota backoff stops without advancing", async () =
     secondContext = resolve;
   });
   const f = await fixture("insufficient_quota", (pi) => {
-    installFallback(pi, config());
+    installChain(pi, config());
     pi.on("turn_end", () => {
       secondContext();
     });
@@ -630,7 +630,7 @@ test("standalone abort during quota backoff stops without advancing", async () =
     f.settings.applyOverrides({
       retry: { enabled: true, maxRetries: 2, baseDelayMs: 60_000, provider: { maxRetries: 0 } },
     });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     const running = f.session.prompt("cancel backoff");
     await entered;
     await delay(10);
@@ -653,16 +653,16 @@ test("unavailable auth skips only explicit targets; cross-provider dispatch is e
       ],
     },
   });
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, policy));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, policy));
   try {
     f.runtime.registerProvider("no-auth", { ...f.provider, apiKey: undefined });
     f.runtime.registerProvider("other", f.provider);
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("explicit cross provider");
     assert.deepEqual(f.dispatches, [{ provider: "other", model: "b", effort: undefined }]);
     const state = f.session.sessionManager
       .getBranch()
-      .findLast((e) => e.type === "custom" && e.customType === "model-fallback.state.v1");
+      .findLast((e) => e.type === "custom" && e.customType === "model-chain.state.v1");
     assert.ok(JSON.stringify(state).includes("no configured authentication"));
     assert.ok(!JSON.stringify(state).includes("fixture-not-a-secret"));
   } finally {
@@ -672,11 +672,11 @@ test("unavailable auth skips only explicit targets; cross-provider dispatch is e
 
 test("an unauthorized missing backup blocks before any primary dispatch", async () => {
   const f = await fixture("insufficient_quota", (pi) =>
-    installFallback(pi, config(["a", "missing", "b"])),
+    installChain(pi, config(["a", "missing", "b"])),
   );
   try {
     f.session.setScopedModels([{ model: f.runtime.getModel("fixture", "a")! }]);
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("reject full chain");
     assert.deepEqual(f.calls, []);
     assert.ok(JSON.stringify(f.session.state.messages).includes("Unauthorized scoped target"));
@@ -701,14 +701,14 @@ for (const kind of ["scope", "effort", "virtual"] as const) {
         : kind === "virtual"
           ? parseConfig({
               version: 1,
-              chains: { probe: [{ provider: "fallback", model: "other", effort: "off" }] },
+              chains: { probe: [{ provider: "chain", model: "other", effort: "off" }] },
             })
           : config();
     const f = await fixture("insufficient_quota", (pi) => {
-      installFallback(pi, policy);
+      installChain(pi, policy);
       if (kind === "virtual")
         pi.registerVirtualModel({
-          provider: "fallback",
+          provider: "chain",
           id: "other",
           name: "Forbidden virtual target",
           route: (_r, ctx) => ({
@@ -723,7 +723,7 @@ for (const kind of ["scope", "effort", "virtual"] as const) {
           { model: f.runtime.getModel("fixture", "a")! },
           { model: f.runtime.getModel("fixture", "b")!, thinkingLevel: "high" },
         ]);
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("must reject");
       assert.deepEqual(f.calls, []);
     } finally {
@@ -733,7 +733,7 @@ for (const kind of ["scope", "effort", "virtual"] as const) {
 }
 
 test("live scope revocation during native backoff blocks instead of advancing", async () => {
-  const f = await fixture("503 service unavailable", (pi) => installFallback(pi, config()));
+  const f = await fixture("503 service unavailable", (pi) => installChain(pi, config()));
   let revoked = false;
   f.session.subscribe((event) => {
     if (event.type === "auto_retry_start" && !revoked) {
@@ -742,7 +742,7 @@ test("live scope revocation during native backoff blocks instead of advancing", 
     }
   });
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("revoke");
     assert.deepEqual(f.calls, ["a"]);
     assert.ok(JSON.stringify(f.session.state.messages).includes("Unauthorized scoped target"));
@@ -757,11 +757,11 @@ for (const retry of [
   { enabled: true, maxRetries: 2, provider: { maxRetries: 1 } },
 ]) {
   test(`incompatible retry settings fail before dispatch: ${JSON.stringify(retry)}`, async () => {
-    const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+    const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
     try {
       f.settings.applyOverrides({ retry });
       const before = f.settings.getSettings();
-      await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
       await f.session.prompt("setup must fail");
       assert.deepEqual(f.calls, []);
       assert.deepEqual(f.settings.getSettings(), before);
@@ -772,7 +772,7 @@ for (const retry of [
 }
 
 test("image-incompatible targets are skipped without placeholder conversion", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   try {
     f.settings.applyOverrides({ images: { autoResize: false } });
     f.runtime.registerProvider("fixture", {
@@ -782,7 +782,7 @@ test("image-incompatible targets are skipped without placeholder conversion", as
         input: model.id === "b" ? ["text", "image"] : ["text"],
       })),
     });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("describe image", {
       images: [
         {
@@ -800,8 +800,8 @@ test("image-incompatible targets are skipped without placeholder conversion", as
   }
 });
 
-test("physical selection is unaffected, even with incompatible fallback settings", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+test("physical selection is unaffected, even with incompatible chain retry settings", async () => {
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   try {
     f.settings.applyOverrides({ retry: { enabled: false } });
     await f.session.prompt("physical pinned");
@@ -809,7 +809,7 @@ test("physical selection is unaffected, even with incompatible fallback settings
     assert.equal(
       f.session.sessionManager
         .getBranch()
-        .filter((e) => e.type === "custom" && e.customType === "model-fallback.state.v1").length,
+        .filter((e) => e.type === "custom" && e.customType === "model-chain.state.v1").length,
       0,
     );
   } finally {
@@ -818,21 +818,21 @@ test("physical selection is unaffected, even with incompatible fallback settings
 });
 
 test("two concurrent sessions isolate their sticky target and reset state", async () => {
-  const a = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+  const a = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   const b = await fixture(
     "insufficient_quota",
-    (pi) => installFallback(pi, config()),
+    (pi) => installChain(pi, config()),
     () => "success",
   );
   try {
     await Promise.all([
-      a.session.setModel(a.runtime.getModel("fallback", "probe")!),
-      b.session.setModel(b.runtime.getModel("fallback", "probe")!),
+      a.session.setModel(a.runtime.getModel("chain", "probe")!),
+      b.session.setModel(b.runtime.getModel("chain", "probe")!),
     ]);
     await Promise.all([a.session.prompt("fall back"), b.session.prompt("stay primary")]);
     assert.deepEqual(a.calls, ["a", "a", "a", "b"]);
     assert.deepEqual(b.calls, ["a"]);
-    await a.session.prompt("/fallback-reset");
+    await a.session.prompt("/chain-reset");
     await b.session.prompt("still primary");
     assert.deepEqual(b.calls, ["a", "a"]);
     assert.equal(a.calls.length, 4);
@@ -842,12 +842,12 @@ test("two concurrent sessions isolate their sticky target and reset state", asyn
 });
 
 test("reset affects only its branch; tree navigation restores primary versus backup", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("fall back");
     const backup = f.session.sessionManager.getLeafId()!;
-    await f.session.prompt("/fallback-reset");
+    await f.session.prompt("/chain-reset");
     const primary = f.session.sessionManager.getLeafId()!;
     assert.notEqual(primary, backup);
     await f.session.navigateTree(backup, { summarize: false });
@@ -864,18 +864,18 @@ test("reset affects only its branch; tree navigation restores primary versus bac
 
 test("configuration changes cannot remap a persisted route without reset", async () => {
   let policy = config();
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, policy));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, policy));
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("fall back");
     policy = config(["b", "a"]);
     await f.session.reload();
     await f.session.prompt("must require reset");
     assert.equal(f.calls.length, 4);
     assert.ok(JSON.stringify(f.session.state.messages).includes("chain changed"));
-    await f.session.prompt("/fallback-status");
+    await f.session.prompt("/chain-status");
     assert.equal(f.calls.length, 4);
-    await f.session.prompt("/fallback-reset");
+    await f.session.prompt("/chain-reset");
     assert.equal(f.calls.length, 4);
     await f.session.prompt("new primary");
     assert.deepEqual(f.calls, ["a", "a", "a", "b", "b"]);
@@ -887,7 +887,7 @@ test("configuration changes cannot remap a persisted route without reset", async
 test("failed direct calls do not initialize or increment ordinary routing state", async () => {
   let ctx!: ExtensionContext;
   const f = await fixture("insufficient_quota", (pi) => {
-    installFallback(pi, config());
+    installChain(pi, config());
     pi.registerCommand("direct-probe", {
       description: "test",
       handler: async (_a, context) => {
@@ -896,11 +896,11 @@ test("failed direct calls do not initialize or increment ordinary routing state"
     });
   });
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("/direct-probe");
     const before = f.session.sessionManager.getBranch();
     const result = await ctx.modelRegistry
-      .streamSimple(f.runtime.getModel("fallback", "probe")!, {
+      .streamSimple(f.runtime.getModel("chain", "probe")!, {
         messages: [{ role: "user", content: "direct failure", timestamp: Date.now() }],
       })
       .result();
@@ -915,10 +915,10 @@ test("failed direct calls do not initialize or increment ordinary routing state"
 
 test("ambiguous authentication/transient response is terminal, never recovered", async () => {
   const f = await fixture("401 unauthorized: server overloaded", (pi) =>
-    installFallback(pi, config()),
+    installChain(pi, config()),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("stop");
     assert.deepEqual(f.calls, ["a"]);
   } finally {
@@ -927,10 +927,10 @@ test("ambiguous authentication/transient response is terminal, never recovered",
 });
 
 test("persisted backup is restored by a newly constructed SDK session", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config()));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   let resumed: typeof f.session | undefined;
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("persist backup");
     const file = f.session.sessionManager.getSessionFile()!;
     f.session.dispose();
@@ -943,7 +943,7 @@ test("persisted backup is restored by a newly constructed SDK session", async ()
       noThemes: true,
       noPromptTemplates: true,
       noContextFiles: true,
-      extensionFactories: [(pi) => installFallback(pi, config())],
+      extensionFactories: [(pi) => installChain(pi, config())],
     });
     await loader.reload();
     resumed = (
@@ -957,7 +957,7 @@ test("persisted backup is restored by a newly constructed SDK session", async ()
         tools: [],
       })
     ).session;
-    assert.equal(resumed.model?.provider, "fallback");
+    assert.equal(resumed.model?.provider, "chain");
     assert.equal(resumed.model?.id, "probe");
     await resumed.prompt("restored");
     assert.deepEqual(f.calls, ["a", "a", "a", "b", "b"]);
@@ -970,15 +970,15 @@ test("persisted backup is restored by a newly constructed SDK session", async ()
 test("all missing backups latch exhaustion without corrupting target identity", async () => {
   const f = await fixture(
     (attempt) => (attempt === 1 ? "insufficient_quota" : "503 service unavailable"),
-    (pi) => installFallback(pi, config(["a", "missing"])),
+    (pi) => installChain(pi, config(["a", "missing"])),
   );
   try {
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("exhaust then skip");
     assert.deepEqual(f.calls, ["a", "a", "a"]);
     const state = f.session.sessionManager
       .getBranch()
-      .findLast((e) => e.type === "custom" && e.customType === "model-fallback.state.v1");
+      .findLast((e) => e.type === "custom" && e.customType === "model-chain.state.v1");
     assert.ok(state?.type === "custom");
     assert.equal((state.data as { failures: number }).failures, 3);
     await f.session.prompt("remain exhausted");
@@ -1000,13 +1000,13 @@ test("exact configured effort and real physical identity are retained", async ()
       ],
     },
   });
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, policy));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, policy));
   try {
     f.runtime.registerProvider("fixture", {
       ...f.provider,
       models: f.provider.models!.map((model) => ({ ...model, reasoning: true })),
     });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("exact efforts");
     assert.deepEqual(
       f.dispatches.map((d) => d.effort),
@@ -1031,7 +1031,7 @@ test("busy operator reset is rejected without changing the in-flight budget", as
     failed = resolve;
   });
   const f = await fixture("insufficient_quota", (pi) => {
-    installFallback(pi, config());
+    installChain(pi, config());
     pi.on("turn_end", () => {
       failed();
     });
@@ -1040,18 +1040,18 @@ test("busy operator reset is rejected without changing the in-flight budget", as
     f.settings.applyOverrides({
       retry: { enabled: true, maxRetries: 2, baseDelayMs: 60_000, provider: { maxRetries: 0 } },
     });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     const running = f.session.prompt("busy");
     await firstFailure;
     await delay(5);
     const statesBefore = f.session.sessionManager
       .getBranch()
-      .filter((e) => e.type === "custom" && e.customType === "model-fallback.state.v1");
-    await f.session.prompt("/fallback-reset");
+      .filter((e) => e.type === "custom" && e.customType === "model-chain.state.v1");
+    await f.session.prompt("/chain-reset");
     assert.deepEqual(
       f.session.sessionManager
         .getBranch()
-        .filter((e) => e.type === "custom" && e.customType === "model-fallback.state.v1"),
+        .filter((e) => e.type === "custom" && e.customType === "model-chain.state.v1"),
       statesBefore,
     );
     await f.session.abort();
@@ -1065,7 +1065,7 @@ test("busy operator reset is rejected without changing the in-flight budget", as
 test("terminal backup authentication failure does not skip to another provider", async () => {
   const f = await fixture(
     (attempt) => (attempt <= 3 ? "insufficient_quota" : "403 permission denied: server overloaded"),
-    (pi) => installFallback(pi, config(["a", "b", "c"])),
+    (pi) => installChain(pi, config(["a", "b", "c"])),
     () => "error",
   );
   try {
@@ -1073,7 +1073,7 @@ test("terminal backup authentication failure does not skip to another provider",
       ...f.provider,
       models: [...f.provider.models!, { ...f.provider.models![1], id: "c", name: "c" }],
     });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("backup permission failure");
     assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
   } finally {
@@ -1082,10 +1082,10 @@ test("terminal backup authentication failure does not skip to another provider",
 });
 
 test("image-incompatible chain stops with a capability skip, not forced conversion", async () => {
-  const f = await fixture("insufficient_quota", (pi) => installFallback(pi, config(["a"])));
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config(["a"])));
   try {
     f.settings.applyOverrides({ images: { autoResize: false } });
-    await f.session.setModel(f.runtime.getModel("fallback", "probe")!);
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
     await f.session.prompt("image", {
       images: [
         {
@@ -1098,7 +1098,7 @@ test("image-incompatible chain stops with a capability skip, not forced conversi
     assert.deepEqual(f.calls, []);
     const state = f.session.sessionManager
       .getBranch()
-      .findLast((e) => e.type === "custom" && e.customType === "model-fallback.state.v1");
+      .findLast((e) => e.type === "custom" && e.customType === "model-chain.state.v1");
     assert.ok(state?.type === "custom");
     assert.equal((state.data as { exhausted: boolean }).exhausted, true);
     assert.ok(JSON.stringify(state).includes("image input unsupported"));

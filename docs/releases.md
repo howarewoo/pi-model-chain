@@ -1,19 +1,26 @@
 # Release guide
 
-Prepare deliberate releases of `@howarewoo/pi-model-fallback` from
-`howarewoo/pi-model-fallback`. These maintainer procedures are not authorization to
+Prepare deliberate releases of `@howarewoo/pi-model-chain` from
+`howarewoo/pi-model-chain`. These maintainer procedures are not authorization to
 publish. Ordinary main pushes do not publish. Local checks do not establish GitHub
 protection, npm ownership, OIDC provenance or a consumer release.
 
 ## One-time owner setup
 
-`@howarewoo/pi-model-fallback` has **not been published to npm yet**. A repository owner and
+`@howarewoo/pi-model-chain` has **not been published to npm yet**. A repository owner and
 an npm package owner must complete these steps before the first release. They are not
 performed by this repository's files, CI or local scripts.
 
-1. **Confirm npm scope rights.** Your npm account must be able to publish
-   `@howarewoo/pi-model-fallback` in the `@howarewoo` scope, with two-factor authentication.
-2. **Protect GitHub.** Independently verify the external controls:
+1. **Rename the GitHub repository** from `howarewoo/pi-model-fallback` to
+   `howarewoo/pi-model-chain` once the rename changes are on `main`, before any release.
+   The `release.yml` guard accepts only `howarewoo/pi-model-chain`, and `package.json`
+   must name the actual repository for npm provenance. Update local clones with
+   `git remote set-url origin https://github.com/howarewoo/pi-model-chain.git`. GitHub
+   redirects the old URLs; do not reuse the old repository name, because that removes the
+   redirects. See [GitHub's rename documentation](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository).
+2. **Confirm npm scope rights.** Your npm account must be able to publish
+   `@howarewoo/pi-model-chain` in the `@howarewoo` scope, with two-factor authentication.
+3. **Protect GitHub.** Independently verify the external controls:
    - Protect `main`: PR required, zero approving reviews, dismiss stale approvals, resolve
      conversations, enforce for admins, and require the GitHub Actions checks
      `check (22.19.0)` and `check (24)` (app ID `15368`, not strict/up-to-date). Establish
@@ -30,26 +37,26 @@ performed by this repository's files, CI or local scripts.
    Recheck actual settings before every release rather than treating repository files or
    a prior setup report as proof that controls remain enabled.
 
-3. **Bootstrap the package with the first manual publish** described in
+4. **Bootstrap the package with the first manual publish** described in
    [First npm publish only](#first-npm-publish-only). A trusted publisher is normally
    configured from an existing package's settings, so do not assume the first
    tag-triggered run can create a new npm package.
-4. **Configure npm Trusted Publishing.** In **`@howarewoo/pi-model-fallback` → Settings →
+5. **Configure npm Trusted Publishing.** In **`@howarewoo/pi-model-chain` → Settings →
    Trusted publishing**, add GitHub Actions with:
 
-   | Field                | Value               |
-   | -------------------- | ------------------- |
-   | Organization or user | `howarewoo`         |
-   | Repository           | `pi-model-fallback` |
-   | Workflow filename    | `release.yml`       |
-   | Environment name     | `npm`               |
+   | Field                | Value            |
+   | -------------------- | ---------------- |
+   | Organization or user | `howarewoo`      |
+   | Repository           | `pi-model-chain` |
+   | Workflow filename    | `release.yml`    |
+   | Environment name     | `npm`            |
 
    Permit direct `npm publish` if npm presents an allowed-actions selector. The workflow
    uses GitHub-hosted runners and `id-token: write`; no `NPM_TOKEN` secret is needed and
    no token fallback is provided. Use npm 11.5.1 or newer for OIDC publishing (the
    release runner uses Node 24).
 
-5. Follow npm's current validation/expiry rules when creating the trusted publisher; create
+6. Follow npm's current validation/expiry rules when creating the trusted publisher; create
    it near the next release. After successful OIDC publication, restrict traditional
    token-based publishing and revoke unused automation tokens. Public GitHub/OIDC
    publication supplies npm provenance automatically.
@@ -66,7 +73,7 @@ Use `type(optional-scope)!: description` for PR titles. Accepted types are `feat
 For example:
 
 ```sh
-PR_TITLE='fix: preserve fallback status' npm run pr-title:check
+PR_TITLE='fix: preserve chain status' npm run pr-title:check
 ```
 
 Ordinary PRs need not edit the changelog. Describe user-facing changes and migration
@@ -85,7 +92,7 @@ all Pi versions. Wildcard host peers are not proof of compatibility with other P
 versions. Keep the root extension entrypoint `./index.ts`, which re-exports `src/index.ts`.
 Do not add a runtime dependency on pi-subagents. `@howarewoo/pi-subagents` is a test-only
 devDependency: `test/coexistence.test.ts` runs in `npm test` and CI against it and asserts
-that both extensions' fallback chains stay independent. `PI_SUBAGENTS_CHECKOUT` selects a
+that this extension's chains and pi-subagents' profile fallback chains stay independent. `PI_SUBAGENTS_CHECKOUT` selects a
 local checkout instead. Keep that devDependency pinned, and review the coexistence result
 when it is bumped.
 
@@ -136,7 +143,7 @@ To verify an already-packed artifact without repacking:
 ```sh
 release_dir="$(mktemp -d)"
 npm pack --pack-destination "$release_dir"
-npm run test:package -- "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz"
+npm run test:package -- "$release_dir/howarewoo-pi-model-chain-0.1.0.tgz"
 ```
 
 Replace the version for subsequent releases. Retain reviewed bytes until verification
@@ -156,11 +163,11 @@ gates above. Use an npm account with publishing rights and two-factor authentica
 npm login
 release_dir="$(mktemp -d)"
 npm pack --pack-destination "$release_dir"
-npm run test:package -- "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz"
-npm publish "$release_dir/howarewoo-pi-model-fallback-0.1.0.tgz" --access public --ignore-scripts
+npm run test:package -- "$release_dir/howarewoo-pi-model-chain-0.1.0.tgz"
+npm publish "$release_dir/howarewoo-pi-model-chain-0.1.0.tgz" --access public --ignore-scripts
 ```
 
-Inspect the result with `npm view @howarewoo/pi-model-fallback@0.1.0 version dist.integrity`.
+Inspect the result with `npm view @howarewoo/pi-model-chain@0.1.0 version dist.integrity`.
 Keep the tarball until verified, then remove the temporary directory. This interactive
 bootstrap is separate from GitHub OIDC and does not claim GitHub provenance. Configure the
 trusted publisher before pushing the release tag. The workflow accepts an already-published
@@ -193,7 +200,7 @@ cannot publish. It serializes releases without canceling active publication.
 Review the commit and approval evidence: job separation does not prove bytes from a
 compromised validation job are trustworthy. Verify npm version/integrity, OIDC provenance
 and the matching GitHub release after publication. Then test a clean Pi user installation,
-`/fallback-status`, and the update path before announcing a consumer release. Local smoke
+`/chain-status`, and the update path before announcing a consumer release. Local smoke
 tests are not proof that publication or that installed-user walkthrough occurred.
 
 ## Recover failures
@@ -209,6 +216,6 @@ tests are not proof that publication or that installed-user walkthrough occurred
 - **Bad published contents:** release a corrected new version and consider an explanatory
   deprecation. Do not overwrite a version or unpublish as normal rollback.
 - **Consumer rollback:** stop active work, install an actually published known-good version
-  (for example `pi install npm:@howarewoo/pi-model-fallback@<known-good-version>`), then
+  (for example `pi install npm:@howarewoo/pi-model-chain@<known-good-version>`), then
   restart Pi. Pinning code does not undo configuration/session changes; follow the release's
   migration instructions and preserve user data.

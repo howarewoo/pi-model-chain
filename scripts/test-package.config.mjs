@@ -47,7 +47,7 @@ export default {
   files:
     /^package\/(?:index\.ts|src\/[\w-]+\.ts|docs\/[\w-]+\.md|package\.json|README\.md|CHANGELOG\.md|LICENSE|SECURITY\.md)$/,
   requiredFiles: ["README.md", "CHANGELOG.md", "LICENSE"],
-  // Without model-fallback.json the extension deliberately registers nothing.
+  // Without model-chain.json the extension deliberately registers nothing.
   tools: [],
   commands: [],
   // With a chain configured, the installed package must register its commands and virtual
@@ -57,7 +57,7 @@ export default {
     await mkdir(agent, { recursive: true });
     const env = { ...process.env, PI_CODING_AGENT_DIR: agent };
     await writeFile(
-      join(agent, "model-fallback.json"),
+      join(agent, "model-chain.json"),
       JSON.stringify({
         version: 1,
         chains: {
@@ -86,17 +86,14 @@ export default {
     await loader.reload();
     const { errors, extensions } = loader.getExtensions();
     assert.deepEqual(errors, []);
-    assert.deepEqual([...extensions[0].commands.keys()].sort(), [
-      "fallback-reset",
-      "fallback-status",
-    ]);
+    assert.deepEqual([...extensions[0].commands.keys()].sort(), ["chain-reset", "chain-status"]);
 
     const install = await pi(["install", installed], { cwd: root, env });
     assert.ok((install.stdout + install.stderr).includes("Installed"));
     const settings = JSON.parse(await readFile(join(agent, "settings.json"), "utf8"));
-    assert.ok(JSON.stringify(settings.packages).includes("pi-model-fallback"));
-    const listed = await pi(["--offline", "--list-models", "fallback"], { cwd: root, env });
-    assert.match(listed.stdout, /fallback\s+work/);
+    assert.ok(JSON.stringify(settings.packages).includes("pi-model-chain"));
+    const listed = await pi(["--offline", "--list-models", "chain"], { cwd: root, env });
+    assert.match(listed.stdout, /chain\s+work/);
     assert.ok(!listed.stderr.includes("Failed to load"));
 
     const dispatches = join(root, "dispatches");
@@ -110,7 +107,7 @@ export default {
         "-e",
         fixture,
         "--model",
-        "fallback/work",
+        "chain/work",
         "-p",
         "Recover with the installed package",
       ],
