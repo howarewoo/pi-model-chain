@@ -45,11 +45,11 @@ export default function(pi) {
 export default {
   // Every packed tar entry must match; anything else fails before installation.
   files:
-    /^package\/(?:index\.ts|src\/[\w-]+\.ts|docs\/[\w-]+\.md|package\.json|README\.md|CHANGELOG\.md|LICENSE|SECURITY\.md)$/,
+    /^package\/(?:index\.ts|src\/[\w-]+\.ts|docs\/[\w-]+\.md|docs\/images\/[\w-]+\.svg|package\.json|README\.md|CHANGELOG\.md|LICENSE|SECURITY\.md)$/,
   requiredFiles: ["README.md", "CHANGELOG.md", "LICENSE"],
-  // Without model-chain.json the extension deliberately registers nothing.
+  // The commands exist even without model-chain.json, so /chain can create the first chain.
   tools: [],
-  commands: [],
+  commands: ["chain", "chain-reset", "chain-status"],
   // With a chain configured, the installed package must register its commands and virtual
   // model, then recover A/A/A/B through real Pi in offline print mode.
   async verify({ installed, root }) {
@@ -86,7 +86,11 @@ export default {
     await loader.reload();
     const { errors, extensions } = loader.getExtensions();
     assert.deepEqual(errors, []);
-    assert.deepEqual([...extensions[0].commands.keys()].sort(), ["chain-reset", "chain-status"]);
+    assert.deepEqual([...extensions[0].commands.keys()].sort(), [
+      "chain",
+      "chain-reset",
+      "chain-status",
+    ]);
 
     const install = await pi(["install", installed], { cwd: root, env });
     assert.ok((install.stdout + install.stderr).includes("Installed"));

@@ -14,10 +14,13 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { readCatalog } from "./catalog.ts";
 import { fingerprint, identity, type Config } from "./config.ts";
+import { createChainManager, type ManagerDeps } from "./manager.ts";
+import { formatStatus, RETRIES, type ChainView } from "./status.ts";
+import { readConfigFile, writeConfigFile } from "./store.ts";
 
 const ENTRY = "model-chain.state.v1";
-const RETRIES = 2;
 interface State {
   version: 1;
   chain: string;
@@ -61,7 +64,13 @@ function hasImages(messages: readonly Message[]): boolean {
   );
 }
 
-export function installChain(pi: ExtensionAPI, config: Config) {
+export interface ChainOptions {
+  /** Config file the /chain manager reads and writes; without it the manager is read-only. */
+  path?: string;
+}
+
+export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOptions = {}) {
+  let config = initial;
   const selected = (ctx: ExtensionContext) =>
     ctx.model?.provider === "chain" && config.chains[ctx.model.id] ? ctx.model.id : undefined;
   const fresh = (chain: string): State => ({
@@ -75,7 +84,7 @@ export function installChain(pi: ExtensionAPI, config: Config) {
     pendingDelay: false,
     skipped: [],
   });
-  function read(ctx: ExtensionContext, chain: string, allowMismatch = false): State {
+  const persisted = (ctx: ExtensionContext, chain: string) => {
     const entry = ctx.sessionManager
       .getBranch()
       .findLast(
@@ -84,8 +93,11 @@ export function installChain(pi: ExtensionAPI, config: Config) {
           entry.customType === ENTRY &&
           (entry.data as Partial<State> | undefined)?.chain === chain,
       );
-    if (!entry || entry.type !== "custom") return fresh(chain);
-    const state = entry.data as State;
+    return entry?.type === "custom" ? (entry.data as State) : undefined;
+  };
+  function read(ctx: ExtensionContext, chain: string, allowMismatch = false): State {
+    const state = persisted(ctx, chain);
+    if (!state) return fresh(chain);
     if (
       state.version !== 1 ||
       !Number.isInteger(state.index) ||
@@ -178,13 +190,29 @@ export function installChain(pi: ExtensionAPI, config: Config) {
     }
     return { state: { ...state, exhausted: true, skipped } };
   }
-  for (const [chain, targets] of Object.entries(config.chains)) {
+  const registered = new Set<string>();
+  /** Register the configured chains as `chain/<name>` models, removing chains that no longer exist. */
+  function apply(next: Config) {
+    config = next;
+    for (const chain of registered)
+      if (!Object.hasOwn(config.chains, chain)) {
+        pi.unregisterVirtualModel("chain", chain);
+        registered.delete(chain);
+      }
+    for (const chain of Object.keys(config.chains)) {
+      register(chain);
+      registered.add(chain);
+    }
+  }
+  function register(chain: string) {
     pi.registerVirtualModel({
       provider: "chain",
       id: chain,
       name: `Chain: ${chain}`,
       input: ["text", "image"],
       async route(request, ctx) {
+        const targets = config.chains[chain];
+        if (!targets) throw new Error(`Chain ${chain} is no longer configured`);
         if (request.reason !== "direct") setup();
         validate(ctx, chain);
         let state = read(ctx, chain);
@@ -263,6 +291,7 @@ export function installChain(pi: ExtensionAPI, config: Config) {
       },
     });
   }
+  apply(initial);
   pi.on("turn_end", (event, ctx) => {
     const chain = selected(ctx);
     if (!chain || event.message.role !== "assistant") return;
@@ -350,55 +379,144 @@ export function installChain(pi: ExtensionAPI, config: Config) {
       continue: true,
     };
   });
+  function view(ctx: ExtensionContext, chain: string): ChainView {
+    let state: State | undefined;
+    let changed = false;
+    if (persisted(ctx, chain))
+      try {
+        state = read(ctx, chain, true);
+        read(ctx, chain); // throws when the chain's targets changed since the state was saved
+      } catch {
+        changed = true;
+      }
+    return {
+      name: chain,
+      targets: config.chains[chain],
+      state,
+      changed,
+      active: selected(ctx) === chain,
+    };
+  }
+  function resetChain(ctx: ExtensionContext, chain: string) {
+    validate(ctx, chain);
+    const result = available(
+      ctx,
+      chain,
+      fresh(chain),
+      convertToLlm(ctx.sessionManager.buildSessionProjection().messages),
+    );
+    save(result.state);
+    return result.state;
+  }
+  function problemFor(ctx: ExtensionContext, chain?: string) {
+    try {
+      setup();
+      if (chain) {
+        validate(ctx, chain);
+        read(ctx, chain);
+      }
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+  function report(ctx: ExtensionContext, chain?: string, problem = problemFor(ctx, chain)) {
+    const current = chain ? view(ctx, chain) : undefined;
+    const content = formatStatus({
+      view: current,
+      chains: Object.keys(config.chains),
+      problem,
+    }).join("\n");
+    if (ctx.hasUI) ctx.ui.notify(content, problem ? "warning" : "info");
+    else
+      pi.sendMessage(
+        {
+          customType: "model-chain.status",
+          content,
+          display: true,
+          details: {
+            chain: chain ?? null,
+            state: current?.state ?? null,
+            problem: problem ?? null,
+          },
+        },
+        { triggerTurn: false },
+      );
+  }
   pi.registerCommand("chain-reset", {
     description: "Reset the selected model chain on this idle branch (no model call)",
     handler: async (_args, ctx) => {
       if (!ctx.isIdle()) throw new Error("Chain reset requires an idle session");
       const chain = selected(ctx);
       if (!chain) throw new Error("Select a chain/<name> model first");
-      validate(ctx, chain);
-      const result = available(
-        ctx,
-        chain,
-        fresh(chain),
-        convertToLlm(ctx.sessionManager.buildSessionProjection().messages),
-      );
-      save(result.state);
-      report(ctx, { chain, state: result.state });
+      resetChain(ctx, chain);
+      report(ctx, chain);
     },
   });
   pi.registerCommand("chain-status", {
-    description: "Show selected branch-local chain state and setup",
+    description: "Show the selected chain's steps, retry budget and setup on this branch",
+    handler: async (_args, ctx) => report(ctx, selected(ctx)),
+  });
+  pi.registerCommand("chain", {
+    description: "Manage model chains: select, create, edit, reorder, reset or delete",
     handler: async (_args, ctx) => {
-      const chain = selected(ctx);
-      let problem: string | undefined;
-      let state: State | null = null;
-      try {
-        if (chain) state = read(ctx, chain, true);
-        setup();
-        if (chain) {
-          validate(ctx, chain);
-          read(ctx, chain);
-        }
-      } catch (error) {
-        problem = String(error);
+      if (!ctx.hasUI) {
+        report(ctx, selected(ctx));
+        return;
       }
-      report(ctx, {
-        chain: chain ?? null,
-        state,
-        problem,
-        warning:
-          "Failed requests can incur costs; failed-attempt usage may be unknown. Capability/context changes may lose caches or cause native compaction.",
-      });
+      const deps: ManagerDeps = {
+        async read() {
+          const file = options.path ? await readConfigFile(options.path) : { config };
+          // Views show the file's chains with this branch's state for the registered ones.
+          const views = Object.keys(file.config.chains).map((chain) =>
+            Object.hasOwn(config.chains, chain) &&
+            fingerprint(config.chains[chain]) === fingerprint(file.config.chains[chain])
+              ? view(ctx, chain)
+              : {
+                  name: chain,
+                  targets: file.config.chains[chain],
+                  active: selected(ctx) === chain,
+                },
+          );
+          return { ...file, views };
+        },
+        catalog: () => readCatalog(ctx),
+        idle: () => ctx.isIdle(),
+        async save(next, expected) {
+          if (!options.path) throw new Error("No config file is available to save to");
+          await writeConfigFile(options.path, next, expected);
+          apply(next);
+        },
+        async activate(chain) {
+          const model = ctx.modelRegistry.find("chain", chain);
+          if (!model || !(await pi.setModel(model)))
+            throw new Error(`Cannot select chain/${chain}; reload after editing the config file`);
+        },
+        reset: (chain) => {
+          if (!Object.hasOwn(config.chains, chain))
+            throw new Error(`Reload to pick up ${chain} from the config file`);
+          resetChain(ctx, chain);
+        },
+      };
+      const snapshot = await deps.read();
+      await ctx.ui.custom<void>(
+        (tui, theme, keys, done) =>
+          createChainManager(
+            deps,
+            snapshot,
+            theme,
+            keys,
+            () => tui.requestRender(),
+            () => done(),
+            () => Math.max(10, Math.floor(tui.terminal.rows * 0.9)),
+          ),
+        {
+          overlay: true,
+          overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" },
+          blocked: { kind: "question", message: "Model chains" },
+        },
+      );
     },
   });
-  function report(ctx: ExtensionContext, data: unknown) {
-    const content = JSON.stringify(data, null, 2);
-    if (ctx.hasUI) ctx.ui.notify(content, "info");
-    else
-      pi.sendMessage(
-        { customType: "model-chain.status", content, display: true },
-        { triggerTurn: false },
-      );
-  }
+  return { apply };
 }

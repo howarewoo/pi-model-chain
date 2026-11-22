@@ -10,8 +10,9 @@ configured target. A working backup stays selected for later turns until you man
 
 This is a standalone main-session extension: it neither imports nor reads the configuration
 or state of a subagent extension. Physical model selections keep normal Pi behavior.
+Manage chains in the `/chain` overlay, or edit the JSON config directly.
 
-[Install](#installation) · [Quick start](#quick-start) · [Configuration](#configuration-reference) · [Safety](#recovery-and-safety-boundaries) · [Documentation](#documentation)
+[Install](#installation) · [Quick start](#quick-start) · [Manage chains](#manage-chains-with-chain) · [Configuration](#configuration-reference) · [Safety](#recovery-and-safety-boundaries) · [Documentation](#documentation)
 
 ## Installation
 
@@ -40,9 +41,11 @@ permissions: review the source before installing.
 1. Configure native provider authentication with Pi's `/login` or existing provider
    configuration. This extension does not provision accounts, copy credentials,
    discover new destinations, or read project-local chain configuration.
-2. Create **`~/.pi/agent/model-chain.json`** (or `model-chain.json` in the agent
-   directory selected by `PI_CODING_AGENT_DIR`). Replace these illustrative IDs
-   with exact physical model IDs from your Pi catalogue:
+2. Run **`/chain`**, press `^N`, name the chain and add steps from the model picker
+   (see [Manage chains](#manage-chains-with-chain)). Or create
+   **`~/.pi/agent/model-chain.json`** yourself (or `model-chain.json` in the agent
+   directory selected by `PI_CODING_AGENT_DIR`), replacing these illustrative IDs with
+   exact physical model IDs from your Pi catalogue:
 
    ```json
    {
@@ -79,18 +82,60 @@ permissions: review the source before installing.
    your settings. `baseDelayMs` and `maxAgentDelayMs` remain Pi's retry settings;
    defaults are 2-second exponential backoff and a 60-second cap.
 
-4. Start Pi or use `/reload`, open `/model`, and select **`chain/work`**. In
-   print mode, use `pi --model chain/work -p 'your request'`.
-5. Use `/chain-status` to see the active target, consecutive eligible failure
-   count, skipped targets/reasons, exhaustion and setup diagnostics. If a backup
+4. Select **`chain/work`** in `/chain` or `/model` (after `/reload` if you edited the
+   file by hand). In print mode, use `pi --model chain/work -p 'your request'`.
+5. Use `/chain-status` to see each step marked active, failed over, skipped or
+   exhausted, the retry budget used, and setup diagnostics. If a backup
    takes over, subsequent successful turns continue using that backup.
 6. When Pi is idle, run `/chain-reset` to return **only the selected chain on
    the current branch** to its first available authorized target. Reset does not
    send a model request, clear conversation history or reset other sessions.
 
-Configuration changes take effect on reload. If an existing chain changes, its
-persisted fingerprint prevents silently reinterpreting an old index. Select that
-chain and explicitly reset it after reviewing the new destinations.
+Hand edits to the config file take effect on reload; `/chain` saves take effect
+immediately. If an existing chain changes, its persisted fingerprint prevents silently
+reinterpreting an old index: the chain shows `changed · reset required` until you
+reset it after reviewing the new destinations.
+
+## Manage chains with /chain
+
+![The /chain overlay listing three chains with status badges and ordered steps, above the model picker with provider tabs, aligned context, cost, vision and auth columns and the inline effort strip.](docs/images/chain-manager.svg)
+
+_The `/chain` overlay and model picker, rendered from the production components with
+synthetic data. Not a terminal screenshot._
+
+`/chain` opens a framed, keyboard-driven overlay. The search box has focus: type to filter
+chains by name or model. Each row shows the chain's badges (`selected`, `ready`,
+`retry 1/2`, `on step 2`, `N skipped`, `exhausted` or `changed`) and its ordered steps as
+`provider/model:effort → …`, with the active step highlighted.
+
+| Key           | List                                | Chain editor                             |
+| ------------- | ----------------------------------- | ---------------------------------------- |
+| `↑`/`↓`       | Move                                | Move between the name and steps          |
+| `Enter`       | Select the chain for this session   | Replace the step via the model picker    |
+| `^E` / `^N`   | Edit the chain / create a chain     | `^N` (or `a`) adds a step after this one |
+| `Shift+↑`/`↓` |                                     | Reorder the step                         |
+| `x`/`Delete`  |                                     | Remove the step                          |
+| `^R`          | Reset the chain on this idle branch |                                          |
+| `^D`          | Delete the chain (asks to confirm)  |                                          |
+| `^S`          |                                     | Validate and save                        |
+| `Esc`         | Close                               | Back; asks again if edits are unsaved    |
+
+The **model picker** keeps its search box focused: type to filter by name, provider or
+model ID, and use `Tab`/`Shift+Tab` to switch provider tabs. Rows show context window,
+price per million tokens, vision support and whether authentication is configured.
+`Enter` opens an inline strip with only the efforts that model supports; `←`/`→` choose one
+and `Enter` adds it. Virtual models, efforts outside the session's model scope, unsupported
+efforts and targets already in the chain stay visible with an inline reason but cannot be
+picked. A model without configured authentication can be added but is skipped at runtime
+until you log in. `Esc` closes the strip, then returns to the editor with your edits intact.
+
+Saving validates the chain (name, at least one step, no duplicates or virtual targets),
+writes `model-chain.json` atomically with owner-only permissions, and registers or removes
+the `chain/<name>` models without a reload. It refuses to overwrite a file that changed on
+disk since `/chain` opened it, and saving, resetting or deleting requires an idle session.
+The selected chain cannot be renamed or deleted; select another model first. Deleting the
+last chain removes the file. Outside the interactive UI, `/chain` prints the same summary
+as `/chain-status`.
 
 ## Configuration reference
 
@@ -150,22 +195,22 @@ than skipping to another provider.
   usage is unknown, not measured zero cost. Status never dumps prompts or keys;
   normal Pi transcript storage still contains the conversation and raw failures.
 
-Status/reset commands have no model-facing tool counterpart. Reset rejects while
-busy. In non-UI modes, status/reset responses are structured custom messages;
-route decisions, capability warnings and raw errors are available in session
-entries. No custom visual dashboard is required.
+The `/chain`, `/chain-status` and `/chain-reset` commands have no model-facing tool
+counterpart. Reset rejects while busy. In non-UI modes, status and reset print the same
+readable summary as a custom message (with structured `details`); route decisions,
+capability warnings and raw errors are available in session entries.
 
 ## Troubleshooting
 
-| Symptom                                 | Check and recovery                                                                                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `chain/…` entries or commands        | Create the agent-directory config, check JSON/version/field names, then `/reload`. No file means the extension registers nothing. Check Pi's extension-load errors. |
-| Retry prerequisite diagnostic           | Set native retries to two, provider retries to zero and enable the retry toggle; the extension never makes these changes for you.                                   |
-| Unauthorized scoped target              | Correct the explicit physical model/effort scopes; adding credentials alone does not authorize a destination.                                                       |
-| Unsupported effort or virtual target    | Use exact supported physical selections. These errors are never availability skips.                                                                                 |
-| Skipped targets / no available target   | Check catalogue IDs, native provider authentication and image support; then reset when appropriate. A runtime 401/403 is terminal, not an availability skip.        |
-| Chain changed or exhausted              | Review `/chain-status`; reset the selected idle branch explicitly. Reset does not test provider health.                                                             |
-| Unexpected provider text stops recovery | Keep the raw error for diagnosis. Do not recategorize an auth/permission/request failure as transient merely to get another model call.                             |
+| Symptom                                 | Check and recovery                                                                                                                                                                            |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `chain/…` entries or commands        | Create a chain in `/chain`, or check the hand-edited config's JSON/version/field names, then `/reload`. An invalid config stops the extension from loading; check Pi's extension-load errors. |
+| Retry prerequisite diagnostic           | Set native retries to two, provider retries to zero and enable the retry toggle; the extension never makes these changes for you.                                                             |
+| Unauthorized scoped target              | Correct the explicit physical model/effort scopes; adding credentials alone does not authorize a destination.                                                                                 |
+| Unsupported effort or virtual target    | Use exact supported physical selections. These errors are never availability skips.                                                                                                           |
+| Skipped targets / no available target   | Check catalogue IDs, native provider authentication and image support; then reset when appropriate. A runtime 401/403 is terminal, not an availability skip.                                  |
+| Chain changed or exhausted              | Review `/chain-status`; reset the selected idle branch explicitly. Reset does not test provider health.                                                                                       |
+| Unexpected provider text stops recovery | Keep the raw error for diagnosis. Do not recategorize an auth/permission/request failure as transient merely to get another model call.                                                       |
 
 ## Updates and rollback
 
@@ -259,7 +304,7 @@ can be installed together, and neither changes the other's chain behavior:
   against the parent chain's budget or position.
 - **Separate configuration, state and commands.** This extension reads only
   `model-chain.json`, stores only `model-chain.*` session entries, registers only the
-  `chain/<name>` virtual models and the `/chain-status` and `/chain-reset`
+  `chain/<name>` virtual models and the `/chain`, `/chain-status` and `/chain-reset`
   commands, and registers no tools. Child profile chains come from pi-subagents'
   `delegation.json` and belong to pi-subagents. Neither extension uses global state or the
   other's event-bus channels, and this extension never calls `setModel`.

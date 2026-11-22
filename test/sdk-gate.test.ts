@@ -875,6 +875,12 @@ test("configuration changes cannot remap a persisted route without reset", async
     assert.ok(JSON.stringify(f.session.state.messages).includes("chain changed"));
     await f.session.prompt("/chain-status");
     assert.equal(f.calls.length, 4);
+    const status = f.session.sessionManager
+      .getBranch()
+      .findLast((e) => e.type === "custom_message" && e.customType === "model-chain.status");
+    assert.ok(status?.type === "custom_message");
+    assert.match(String(status.content), /changed · reset required/);
+    assert.match(String(status.content), /Problem: Model chain changed; manual reset required/);
     await f.session.prompt("/chain-reset");
     assert.equal(f.calls.length, 4);
     await f.session.prompt("new primary");
@@ -943,7 +949,7 @@ test("persisted backup is restored by a newly constructed SDK session", async ()
       noThemes: true,
       noPromptTemplates: true,
       noContextFiles: true,
-      extensionFactories: [(pi) => installChain(pi, config())],
+      extensionFactories: [(pi) => void installChain(pi, config())],
     });
     await loader.reload();
     resumed = (
@@ -1102,6 +1108,46 @@ test("image-incompatible chain stops with a capability skip, not forced conversi
     assert.ok(state?.type === "custom");
     assert.equal((state.data as { exhausted: boolean }).exhausted, true);
     assert.ok(JSON.stringify(state).includes("image input unsupported"));
+  } finally {
+    await f.close();
+  }
+});
+
+test("headless status is readable text; applied configs register and remove chain models", async () => {
+  let controller!: ReturnType<typeof installChain>;
+  const f = await fixture("insufficient_quota", (pi) => {
+    controller = installChain(pi, config());
+  });
+  try {
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
+    await f.session.prompt("fall back");
+    await f.session.prompt("/chain-status");
+    const status = f.session.sessionManager
+      .getBranch()
+      .findLast((e) => e.type === "custom_message" && e.customType === "model-chain.status");
+    assert.ok(status?.type === "custom_message");
+    const content = String(status.content);
+    assert.match(content, /^Chain probe \(chain\/probe\) · selected · on step 2/);
+    assert.match(content, /✗ 1\. fixture\/a:off {2}failed over/);
+    assert.match(content, /▶ 2\. fixture\/b:off {2}active/);
+    assert.ok(!content.trimStart().startsWith("{"), "status is not a JSON dump");
+    assert.equal((status.details as { state: { index: number } }).state.index, 1);
+
+    controller.apply(
+      parseConfig({
+        version: 1,
+        chains: {
+          probe: config().chains.probe,
+          spare: [{ provider: "fixture", model: "a", effort: "off" }],
+        },
+      }),
+    );
+    assert.equal(f.runtime.getModel("chain", "spare")?.name, "Chain: spare");
+    controller.apply(config());
+    assert.equal(f.runtime.getModel("chain", "spare"), undefined);
+    assert.ok(f.runtime.getModel("chain", "probe"));
+    await f.session.prompt("still routed after apply");
+    assert.deepEqual(f.calls, ["a", "a", "a", "b", "b"]);
   } finally {
     await f.close();
   }
