@@ -83,8 +83,11 @@ Node >=22.19.0 and Pi **1.6.0** are the tested baseline. CI runs every check on 
 22.19.0 and Node 24 with pinned Pi 1.6.0 development packages, not an implied matrix of
 all Pi versions. Wildcard host peers are not proof of compatibility with other Pi
 versions. Keep the root extension entrypoint `./index.ts`, which re-exports `src/index.ts`.
-Do not introduce a subagents dependency; `test:coexistence` is an optional local check
-requiring `PI_SUBAGENTS_CHECKOUT`, and a skip is not coexistence evidence.
+Do not add a runtime dependency on pi-subagents. `@howarewoo/pi-subagents` is a test-only
+devDependency: `test/coexistence.test.ts` runs in `npm test` and CI against it and asserts
+that both extensions' fallback chains stay independent. `PI_SUBAGENTS_CHECKOUT` selects a
+local checkout instead. Keep that devDependency pinned, and review the coexistence result
+when it is bumped.
 
 ## Prepare and validate notes
 
