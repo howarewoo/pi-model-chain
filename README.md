@@ -238,13 +238,14 @@ queued steering/follow-ups, stream/tool safety, scopes/auth/capabilities, cancel
 branch reset/reload/compaction/resume, concurrent isolation and read-only direct
 calls. The image-modality test disables native auto-resize to isolate routing.
 
-`npm run test:package` packs the tarball (or tests one you pass), checks every entry against
-a file allowlist, installs it offline without host SDK copies, and checks the manifest and
-packed README links. It then loads the package in the pinned Pi 1.6.0. With a temporary
-chain configured, it checks the registered commands, runs real Pi `install` and `/model`
-catalogue discovery, and observes A/A/A/B recovery through the installed package in offline
-print mode. Run `npm ci` first: the install reads the npm cache. It changes only temporary
-settings and cleans them up. The smaller `test/recovery-probe.ts` is a public-API checkpoint fixture, not shipped runtime.
+`npm run test:package` packs the tarball (or tests one you pass), checks every entry
+against a file allowlist, installs it cache-first (`--prefer-offline`) without host SDK
+copies, and checks the manifest and packed README links. It then loads the package in the
+pinned Pi 1.6.0. With a temporary chain configured, it checks the registered commands, runs
+real Pi `install` and `/model` catalogue discovery, and observes A/A/A/B recovery through
+the installed package in offline print mode. It prefers the npm cache but may fetch registry
+metadata. It changes only temporary settings and cleans them up. The smaller
+`test/recovery-probe.ts` is a public-API checkpoint fixture, not shipped runtime.
 
 ## Coexistence with pi-subagents
 
