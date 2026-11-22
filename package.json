@@ -1,0 +1,73 @@
+{
+  "name": "@howarewoo/pi-model-fallback",
+  "version": "0.1.0",
+  "description": "Pi extension for named model fallback chains with bounded retries, sticky backups and branch-persisted state.",
+  "keywords": [
+    "fallback",
+    "model-fallback",
+    "model-routing",
+    "pi-coding-agent",
+    "pi-extension",
+    "pi-package",
+    "retry"
+  ],
+  "homepage": "https://github.com/howarewoo/pi-model-fallback#readme",
+  "bugs": {
+    "url": "https://github.com/howarewoo/pi-model-fallback/issues"
+  },
+  "license": "MIT",
+  "author": "Adam Woo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/howarewoo/pi-model-fallback.git"
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
+    "test:package": "node scripts/test-package.mjs",
+    "test:coexistence": "node --test test/coexistence.test.ts",
+    "release:check": "node scripts/release-notes.mjs",
+    "changelog:generate": "node scripts/generate-changelog.mjs",
+    "pr-title:check": "node scripts/check-pr-title.mjs"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@howarewoo/pi-subagents": "0.5.0",
+    "@types/node": "26.6.6",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "typebox": "1.3.27",
+    "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
