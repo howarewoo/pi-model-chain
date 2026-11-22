@@ -174,30 +174,44 @@ directory, then runs A/A/A/B recovery through the installed package in offline
 print mode. It changes only temporary settings and cleans them up. The smaller
 `test/recovery-probe.ts` is a public-API checkpoint fixture, not shipped runtime.
 
-### Optional local coexistence acceptance
+## Coexistence with pi-subagents
 
-```sh
-PI_SUBAGENTS_CHECKOUT=/absolute/path/to/pi-subagents npm run test:coexistence
-```
+This extension and [`@howarewoo/pi-subagents`](https://github.com/howarewoo/pi-subagents)
+can be installed together, and neither changes the other's fallback-chain behavior:
 
-This opt-in SDK fixture loads both actual extension entrypoints from local sources
-under one temporary agent directory. The other checkout must already have its own
-dependencies installed. The fixture uses public Pi extension loading rather than
-cross-repository source/test imports. No package dependency is added, and the check
-is skipped without the environment variable; it is not part of required standalone
-CI.
+- **Separate scopes.** This extension routes only the session it is loaded into, the main
+  Pi session. Subagent children run in their own SDK sessions, which load no installed
+  extensions and never route through virtual models. This extension therefore never
+  retries, switches or records state for a child, and a child's failures never count
+  against the parent chain's budget or position.
+- **Separate configuration, state and commands.** This extension reads only
+  `model-fallback.json`, stores only `model-fallback.*` session entries, registers only the
+  `fallback/<chain>` virtual models and the `/fallback-status` and `/fallback-reset`
+  commands, and registers no tools. Child profile chains come from pi-subagents'
+  `delegation.json` and belong to pi-subagents. Neither extension uses global state or the
+  other's event-bus channels, and this extension never calls `setModel`.
+- **Separate resets.** `/fallback-reset` never changes a child's chain, and pi-subagents'
+  `delegate_coordinate reset_fallback` never changes the parent chain. Neither sends a
+  model request.
 
-Observed against `pi-subagents` commit
-`64db91266549e156cbfccd9779b7cfed7b4737b4` with Pi 1.6.0: parent A/A/A/B, then a real
-`delegate_task` invocation dispatching the profile-owned C/C/C/D, followed by B.
-Parent reset leaves the retained child on D; child reset restores C without
-resetting parent B or dispatching a provider request. A subsequent parent request
-still uses B. Provider streams are controlled, not paid calls. This is a real
-local-source coexistence scenario, not a broad installed-version compatibility
-matrix. The package has no subagent dependency or routing bridge; each policy
-remains independently owned. No paid-provider uptime/account smoke test is claimed.
-Later `pi-subagents` releases replaced `/subagent-fallback-reset` with the subagent
-hub, so the fixture's child-reset step requires that revision or an equivalent one.
+While the parent has `fallback/<chain>` selected, pi-subagents rejects a child that would
+inherit the parent's model, because it does not route virtual parent models. Give that
+profile its own `model` or `fallback` chain.
+
+`test/coexistence.test.ts` runs in `npm test` and CI. It loads the real pi-subagents
+extension, pinned as a test-only devDependency (the package itself has no dependency on
+it), through Pi's public extension loader. It runs each extension alone and then both
+together with the same controlled providers, and asserts that:
+
+- The parent's A/A/A/B recovery is identical.
+- The child's C/C/C/D profile-chain switches and its fallback snapshot are identical.
+- The child transcript contains no `model-fallback` state.
+- Each reset affects only its own chain.
+
+To test a local pi-subagents checkout (with its dependencies installed) instead, run
+`PI_SUBAGENTS_CHECKOUT=/absolute/path/to/pi-subagents npm run test:coexistence`. This
+was verified against pi-subagents `main` at `13d8151`. Provider streams are controlled,
+not paid calls.
 
 ## Repository and licensing
 
