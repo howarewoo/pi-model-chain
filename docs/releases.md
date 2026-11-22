@@ -122,8 +122,9 @@ npm run test:package
 ```
 
 `check` runs lint, formatting, typechecking and deterministic config/SDK/release/helper
-tests. `release:check` checks stable tag/manifest/lockfile agreement, the MIT license field and
-one exact nonempty version heading. `test:package` packs and installs into a disposable
+tests. `release:check` checks stable tag/manifest/lockfile agreement (name, version, engines and
+dependency fields), the MIT license field, public publish access and one exact nonempty
+version heading. `test:package` packs and installs into a disposable
 clean consumer without bundled host peers or install scripts, loads with real Pi 1.6.0,
 and exercises controlled fallback recovery. No live provider calls are made.
 

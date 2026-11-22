@@ -24,16 +24,18 @@
   "files": [
     "index.ts",
     "src",
+    "docs",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "SECURITY.md"
   ],
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "test": "node --test test/config.test.ts test/sdk-gate.test.ts test/release.test.ts test/changelog.test.ts test/coexistence.test.ts",
+    "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings .",
     "lint:fix": "npm run lint -- --fix",
