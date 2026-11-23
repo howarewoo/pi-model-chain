@@ -271,8 +271,7 @@ npm run release:check
 `npm run check` runs lint, formatting, typecheck and tests. Tests run with Node's native
 `node --test` runner and type stripping; there is no build step. Oxlint checks correctness
 rules and warnings fail the lint command. Run `npm run lint:fix` for safe lint fixes and
-`npm run format` to apply Oxfmt formatting. Formatting skips the generated lockfile and the
-managed Pullfrog workflow.
+`npm run format` to apply Oxfmt formatting. Formatting skips the generated lockfile.
 
 Dependencies are pinned to the authoritative registry's Pi 1.6.0 baseline. The SDK
 suite uses scripted in-process providers and temporary agent/session directories,
