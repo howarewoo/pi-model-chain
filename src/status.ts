@@ -59,13 +59,30 @@ const glyph: Record<StepMark, string> = {
   exhausted: "■",
 };
 
+/** Compact footer status showing the active target model and chain state. */
+export function formatFooterStatus(view: ChainView): string {
+  if (view.changed) return `Chain-${view.name} (changed · reset required)`;
+  const index = view.state?.index ?? 0;
+  const target = view.targets[index] ?? view.targets[0];
+  if (!target) return `Chain-${view.name}`;
+  const base = `${target.provider}/${target.model} Chain-${view.name} ${target.effort}`;
+  if (view.state?.exhausted) return `${base} (exhausted)`;
+  const parts: string[] = [];
+  if (view.state && view.state.index > 0)
+    parts.push(`${view.state.index + 1}/${view.targets.length}`);
+  if (view.state && view.state.failures > 0)
+    parts.push(`retry ${Math.min(view.state.failures, RETRIES)}/${RETRIES}`);
+  return parts.length ? `${base} (${parts.join(" · ")})` : base;
+}
+
 /** Plain, readable status text shared by the UI notification and headless output. */
 export function formatStatus(input: {
   view?: ChainView;
   chains: readonly string[];
   problem?: string;
+  warning?: string;
 }): string[] {
-  const { view, chains, problem } = input;
+  const { view, chains, problem, warning } = input;
   const lines: string[] = [];
   if (!view) {
     lines.push(
@@ -100,6 +117,7 @@ export function formatStatus(input: {
     );
   }
   if (problem) lines.push(`Problem: ${problem}`);
+  if (warning) lines.push(`Warning: ${warning}`);
   lines.push(
     "Note: failed requests can incur costs, and their usage may be unknown. Switching targets can lose caches or trigger compaction.",
   );

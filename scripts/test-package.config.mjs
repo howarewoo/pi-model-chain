@@ -68,7 +68,6 @@ export default {
     await writeFile(
       join(agent, "settings.json"),
       JSON.stringify({
-        retry: { enabled: true, maxRetries: 2, baseDelayMs: 1, provider: { maxRetries: 0 } },
         compaction: { enabled: false },
       }),
     );

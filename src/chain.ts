@@ -17,10 +17,11 @@ import {
 import { readCatalog } from "./catalog.ts";
 import { fingerprint, identity, type Config } from "./config.ts";
 import { createChainManager, type ManagerDeps } from "./manager.ts";
-import { formatStatus, RETRIES, type ChainView } from "./status.ts";
+import { formatFooterStatus, formatStatus, RETRIES, type ChainView } from "./status.ts";
 import { readConfigFile, writeConfigFile } from "./store.ts";
 
 const ENTRY = "model-chain.state.v1";
+const STATUS_KEY = "model-chain";
 interface State {
   version: 1;
   chain: string;
@@ -32,6 +33,7 @@ interface State {
   exhausted: boolean;
   pendingDelay: boolean;
   warnedCapabilities?: boolean;
+  warnedProviderRetries?: boolean;
   skipped: { target: string; reason: string }[];
 }
 function eligible(message: AssistantMessage): boolean {
@@ -71,8 +73,21 @@ export interface ChainOptions {
 
 export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOptions = {}) {
   let config = initial;
-  const selected = (ctx: ExtensionContext) =>
-    ctx.model?.provider === "chain" && config.chains[ctx.model.id] ? ctx.model.id : undefined;
+  const chainForModel = (model: ExtensionContext["model"]) =>
+    model?.provider === "chain" && config.chains[model.id] ? model.id : undefined;
+  const selected = (ctx: ExtensionContext) => chainForModel(ctx.model);
+  function syncStatus(ctx: ExtensionContext, override?: { chain?: string; state?: State }) {
+    if (!ctx.hasUI) return;
+    const chain = override && "chain" in override ? override.chain : selected(ctx);
+    if (!chain || !Object.hasOwn(config.chains, chain)) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
+      return;
+    }
+    const current: ChainView = override?.state
+      ? { name: chain, targets: config.chains[chain], state: override.state, active: true }
+      : view(ctx, chain);
+    ctx.ui.setStatus(STATUS_KEY, formatFooterStatus(current));
+  }
   const fresh = (chain: string): State => ({
     version: 1,
     chain,
@@ -120,16 +135,10 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
     return state;
   }
   const save = (state: State) => pi.appendEntry(ENTRY, state);
-  function setup() {
-    const retry = pi.getSettings().retry;
-    if (
-      retry?.enabled === false ||
-      retry?.maxRetries !== RETRIES ||
-      (retry?.provider?.maxRetries ?? 0) !== 0
-    )
-      throw new Error(
-        "Model chains require retry.enabled=true, retry.maxRetries=2 and retry.provider.maxRetries=0; settings were not changed",
-      );
+  function providerRetryWarning(): string | undefined {
+    const providerRetries = pi.getSettings().retry?.provider?.maxRetries ?? 0;
+    if (providerRetries <= 0) return undefined;
+    return `retry.provider.maxRetries is ${providerRetries}; provider-level retries run inside each attempt before chain failover. Set retry.provider.maxRetries to 0 for exact per-target retry budgets.`;
   }
   function validate(ctx: ExtensionContext, chain: string) {
     for (const target of config.chains[chain]) {
@@ -213,7 +222,6 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       async route(request, ctx) {
         const targets = config.chains[chain];
         if (!targets) throw new Error(`Chain ${chain} is no longer configured`);
-        if (request.reason !== "direct") setup();
         validate(ctx, chain);
         let state = read(ctx, chain);
         const previous = state;
@@ -222,7 +230,9 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
         // continuation. The persisted physical-target budget is authoritative.
         if (request.reason !== "direct" && state.failures >= RETRIES + 1) {
           if (state.index + 1 === targets.length) {
-            save({ ...state, exhausted: true, pendingDelay: false });
+            const exhausted = { ...state, exhausted: true, pendingDelay: false };
+            save(exhausted);
+            syncStatus(ctx, { chain, state: exhausted });
             throw new Error("Model chain exhausted; /chain-reset required");
           }
           state = {
@@ -255,22 +265,24 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
             undefined,
             { signal: request.signal },
           );
-          // Settings/scopes/auth may have changed while the cancellable wait ran.
-          setup();
+          // Scopes/auth may have changed while the cancellable wait ran.
           validate(ctx, chain);
         }
         request.signal?.throwIfAborted();
         const result = available(ctx, chain, state, request.messages, request.reason === "direct");
         state = result.state;
         if (!result.model) {
-          if (request.reason !== "direct")
-            save({
+          if (request.reason !== "direct") {
+            const exhausted = {
               ...state,
               index: previous.index,
               target: previous.target,
               failures: previous.failures,
               pendingDelay: false,
-            });
+            };
+            save(exhausted);
+            syncStatus(ctx, { chain, state: exhausted });
+          }
           throw new Error("No available authorized chain targets; /chain-reset required");
         }
         if (request.reason !== "direct") {
@@ -285,7 +297,15 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
             if (ctx.hasUI) ctx.ui.notify(warning, "warning");
             state = { ...state, warnedCapabilities: true };
           }
-          save({ ...state, pendingDelay: false });
+          const retryWarning = providerRetryWarning();
+          if (!state.warnedProviderRetries && retryWarning) {
+            pi.appendEntry("model-chain.warning", { chain, warning: retryWarning });
+            if (ctx.hasUI) ctx.ui.notify(retryWarning, "warning");
+            state = { ...state, warnedProviderRetries: true };
+          }
+          const next = { ...state, pendingDelay: false };
+          save(next);
+          syncStatus(ctx, { chain, state: next });
         }
         return { model: result.model, thinkingLevel: targets[state.index].effort };
       },
@@ -309,6 +329,15 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       event.message.stopReason !== "error" &&
       event.message.stopReason !== "aborted" &&
       !isRecoverableLength(event.message, model?.maxTokens ?? 0);
+    const retry = pi.getSettings().retry;
+    const nativeRetry = retry?.enabled !== false && (retry?.maxRetries ?? 3) > 0;
+    const nextState: State = {
+      ...state,
+      failures: recover ? state.failures + 1 : successful ? 0 : state.failures,
+      pendingDelay: recover && (!isRetryableAssistantError(event.message) || !nativeRetry),
+      lastEntryId: event.messageEntryId,
+    };
+    syncStatus(ctx, { chain, state: nextState });
     return {
       entries: [
         ...event.entries,
@@ -320,12 +349,7 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
         {
           type: "custom",
           customType: ENTRY,
-          data: {
-            ...state,
-            failures: recover ? state.failures + 1 : successful ? 0 : state.failures,
-            pendingDelay: recover && !isRetryableAssistantError(event.message),
-            lastEntryId: event.messageEntryId,
-          },
+          data: nextState,
         },
       ],
     };
@@ -345,7 +369,6 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       !eligible(last.message)
     )
       return;
-    setup();
     validate(ctx, chain);
     const exhaustedTarget = state.failures >= RETRIES + 1;
     let next = {
@@ -356,28 +379,38 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
     };
     const result = available(ctx, chain, next, event.context.llmMessages);
     next = result.state;
-    if (!result.model)
+    if (!result.model) {
+      const exhausted: State = {
+        ...next,
+        index: state.index,
+        target: state.target,
+        failures: state.failures,
+        exhausted: true,
+        pendingDelay: false,
+      };
+      syncStatus(ctx, { chain, state: exhausted });
       return {
         entries: [
           ...event.entries,
           {
             type: "custom",
             customType: ENTRY,
-            data: {
-              ...next,
-              index: state.index,
-              target: state.target,
-              failures: state.failures,
-              exhausted: true,
-              pendingDelay: false,
-            },
+            data: exhausted,
           },
         ],
       };
+    }
+    syncStatus(ctx, { chain, state: next });
     return {
       entries: [...event.entries, { type: "custom", customType: ENTRY, data: next }],
       continue: true,
     };
+  });
+  pi.on("session_start", (_event, ctx) => syncStatus(ctx));
+  pi.on("model_select", (event, ctx) => syncStatus(ctx, { chain: chainForModel(event.model) }));
+  pi.on("session_tree", (_event, ctx) => syncStatus(ctx));
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
   });
   function view(ctx: ExtensionContext, chain: string): ChainView {
     let state: State | undefined;
@@ -406,11 +439,11 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       convertToLlm(ctx.sessionManager.buildSessionProjection().messages),
     );
     save(result.state);
+    if (selected(ctx) === chain) syncStatus(ctx, { chain, state: result.state });
     return result.state;
   }
   function problemFor(ctx: ExtensionContext, chain?: string) {
     try {
-      setup();
       if (chain) {
         validate(ctx, chain);
         read(ctx, chain);
@@ -422,12 +455,14 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
   }
   function report(ctx: ExtensionContext, chain?: string, problem = problemFor(ctx, chain)) {
     const current = chain ? view(ctx, chain) : undefined;
+    const warning = providerRetryWarning();
     const content = formatStatus({
       view: current,
       chains: Object.keys(config.chains),
       problem,
+      warning,
     }).join("\n");
-    if (ctx.hasUI) ctx.ui.notify(content, problem ? "warning" : "info");
+    if (ctx.hasUI) ctx.ui.notify(content, problem || warning ? "warning" : "info");
     else
       pi.sendMessage(
         {
@@ -438,6 +473,7 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
             chain: chain ?? null,
             state: current?.state ?? null,
             problem: problem ?? null,
+            warning: warning ?? null,
           },
         },
         { triggerTurn: false },
@@ -486,6 +522,7 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
           if (!options.path) throw new Error("No config file is available to save to");
           await writeConfigFile(options.path, next, expected);
           apply(next);
+          syncStatus(ctx);
         },
         async activate(chain) {
           const model = ctx.modelRegistry.find("chain", chain);
