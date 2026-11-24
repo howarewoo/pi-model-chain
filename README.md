@@ -63,31 +63,21 @@ permissions: review the source before installing.
    routing is never inferred from your credentials or catalogue. Choose only
    destinations you permit to receive that data.
 
-3. Merge the following prerequisite into your existing Pi `settings.json`; do not
-   replace unrelated settings:
-
-   ```json
-   {
-     "retry": {
-       "enabled": true,
-       "maxRetries": 2,
-       "provider": { "maxRetries": 0 }
-     }
-   }
-   ```
-
-   Native agent retries and provider-level retries are different. The extension
-   checks effective settings, including runtime retry toggles, before ordinary
-   dispatch and after its backoff. It stops with a diagnostic instead of changing
-   your settings. `baseDelayMs` and `maxAgentDelayMs` remain Pi's retry settings;
-   defaults are 2-second exponential backoff and a 60-second cap.
-
-4. Select **`chain/work`** in `/chain` or `/model` (after `/reload` if you edited the
+3. Select **`chain/work`** in `/chain` or `/model` (after `/reload` if you edited the
    file by hand). In print mode, use `pi --model chain/work -p 'your request'`.
-5. Use `/chain-status` to see each step marked active, failed over, skipped or
-   exhausted, the retry budget used, and setup diagnostics. If a backup
-   takes over, subsequent successful turns continue using that backup.
-6. When Pi is idle, run `/chain-reset` to return **only the selected chain on
+   No `settings.json` changes are required: chains work with Pi's default retry settings
+   and any `retry.enabled` or `retry.maxRetries` configuration. `retry.baseDelayMs` and
+   `retry.maxAgentDelayMs` control backoff timing (defaults are 2-second exponential
+   backoff and a 60-second cap). Keep `retry.provider.maxRetries` at `0` (Pi's default)
+   so provider-level retries do not run before chain failover; the extension warns if it
+   is non-zero and never modifies your settings.
+4. Use `/chain-status` to see each step marked active, failed over, skipped or
+   exhausted, the retry budget used, and any diagnostics or warnings. In interactive
+   mode, the footer status also tracks the active model live as
+   `<provider>/<model> Chain-<name> <effort>` (with retry, step, exhausted or
+   changed state when applicable) and clears when a physical model is selected.
+   If a backup takes over, subsequent successful turns continue using that backup.
+5. When Pi is idle, run `/chain-reset` to return **only the selected chain on
    the current branch** to its first available authorized target. Reset does not
    send a model request, clear conversation history or reset other sessions.
 
@@ -164,10 +154,14 @@ than skipping to another provider.
   of guessing. Authentication/permission failures, invalid requests, refusals,
   cancellation and tool failures do not trigger fallback.
 - **Exact retry budget:** state tracks failures by physical target, not Pi's
-  native retry counter. Native transient retries remain enabled. Before a native
-  retry could exceed three attempts, the virtual router advances. Quota and
-  remaining-budget recovery use the public settlement boundary. This also gives
-  a backup its full two retries when a native counter carries over from a primary.
+  native retry counter. Each target gets one initial attempt plus two retries
+  regardless of `retry.enabled` or `retry.maxRetries`. Before a native retry
+  could exceed three attempts, the virtual router advances. Quota failures,
+  disabled native retries and remaining-budget recovery use the public
+  settlement boundary. This also gives a backup its full two retries when a
+  native counter carries over from a primary. If `retry.provider.maxRetries` is
+  set above `0`, the extension warns once and reports it in `/chain-status`
+  without modifying your settings.
 - **Backoff and cancellation:** boundary recovery defers backoff to the next router
   invocation, where Pi provides a live abort signal. Escape/abort cancels that
   wait; it cannot dispatch another provider request or automatically resume it.
@@ -205,7 +199,7 @@ capability warnings and raw errors are available in session entries.
 | Symptom                                 | Check and recovery                                                                                                                                                                            |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No `chain/…` entries or commands        | Create a chain in `/chain`, or check the hand-edited config's JSON/version/field names, then `/reload`. An invalid config stops the extension from loading; check Pi's extension-load errors. |
-| Retry prerequisite diagnostic           | Set native retries to two, provider retries to zero and enable the retry toggle; the extension never makes these changes for you.                                                             |
+| Provider retry warning                  | Set `retry.provider.maxRetries` to `0` (Pi's default) if you want exact per-target retry budgets; the extension never modifies your settings.                                                 |
 | Unauthorized scoped target              | Correct the explicit physical model/effort scopes; adding credentials alone does not authorize a destination.                                                                                 |
 | Unsupported effort or virtual target    | Use exact supported physical selections. These errors are never availability skips.                                                                                                           |
 | Skipped targets / no available target   | Check catalogue IDs, native provider authentication and image support; then reset when appropriate. A runtime 401/403 is terminal, not an availability skip.                                  |

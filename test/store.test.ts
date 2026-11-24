@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Config } from "../src/config.ts";
-import { formatStatus, badges, stepMarks } from "../src/status.ts";
+import { formatFooterStatus, formatStatus, badges, stepMarks } from "../src/status.ts";
 import { readConfigFile, writeConfigFile } from "../src/store.ts";
 
 const work: Config = {
@@ -85,6 +85,51 @@ test("status text is readable, marks each step and never dumps JSON", () => {
   assert.ok(badges({ ...view, changed: true }).includes("changed · reset required"));
   assert.match(formatStatus({ chains: [] })[0], /No chains configured/);
   assert.match(formatStatus({ chains: ["work"], problem: "boom" }).join("\n"), /Problem: boom/);
+  assert.match(
+    formatStatus({ chains: ["work"], warning: "provider retries" }).join("\n"),
+    /Warning: provider retries/,
+  );
+
+  assert.equal(
+    formatFooterStatus({ name: "Default", targets: work.chains.work }),
+    "a/one Chain-Default high",
+  );
+  assert.equal(
+    formatFooterStatus({
+      name: "Default",
+      targets: work.chains.work,
+      state: { index: 0, failures: 1, exhausted: false, skipped: [] },
+    }),
+    "a/one Chain-Default high (retry 1/2)",
+  );
+  assert.equal(
+    formatFooterStatus({
+      name: "Default",
+      targets: work.chains.work,
+      state: { index: 1, failures: 0, exhausted: false, skipped: [] },
+    }),
+    "b/two Chain-Default off (2/2)",
+  );
+  assert.equal(
+    formatFooterStatus({
+      name: "Default",
+      targets: work.chains.work,
+      state: { index: 1, failures: 2, exhausted: false, skipped: [] },
+    }),
+    "b/two Chain-Default off (2/2 · retry 2/2)",
+  );
+  assert.equal(
+    formatFooterStatus({
+      name: "Default",
+      targets: work.chains.work,
+      state: { index: 1, failures: 3, exhausted: true, skipped: [] },
+    }),
+    "b/two Chain-Default off (exhausted)",
+  );
+  assert.equal(
+    formatFooterStatus({ name: "Default", targets: work.chains.work, changed: true }),
+    "Chain-Default (changed · reset required)",
+  );
 });
 
 test("saving through a symlinked config replaces the target and keeps the link", async (t) => {

@@ -751,25 +751,161 @@ test("live scope revocation during native backoff blocks instead of advancing", 
   }
 });
 
-for (const retry of [
-  { enabled: false, maxRetries: 2 },
-  { enabled: true, maxRetries: 3 },
-  { enabled: true, maxRetries: 2, provider: { maxRetries: 1 } },
-]) {
-  test(`incompatible retry settings fail before dispatch: ${JSON.stringify(retry)}`, async () => {
-    const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
-    try {
-      f.settings.applyOverrides({ retry });
-      const before = f.settings.getSettings();
-      await f.session.setModel(f.runtime.getModel("chain", "probe")!);
-      await f.session.prompt("setup must fail");
-      assert.deepEqual(f.calls, []);
-      assert.deepEqual(f.settings.getSettings(), before);
-    } finally {
-      await f.close();
-    }
+test("fresh default Pi settings without a retry section work immediately on install", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "chain-default-settings-"));
+  const settings = SettingsManager.inMemory({});
+  const runtime = await ModelRuntime.create({
+    authPath: join(dir, "auth.json"),
+    modelsPath: null,
+    refreshOnCreate: false,
   });
+  const calls: string[] = [];
+  runtime.registerProvider("fixture", {
+    api: "openai-completions",
+    apiKey: "fixture-not-a-secret",
+    baseUrl: "https://invalid.example",
+    models: ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 1024,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    })),
+    streamSimple(model) {
+      calls.push(model.id);
+      const message: AssistantMessage = {
+        role: "assistant",
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now(),
+        content: [{ type: "text", text: "ok" }],
+        stopReason: "stop",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      };
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "start", partial: message });
+      stream.push({ type: "done", reason: "stop", message });
+      stream.end();
+      return stream;
+    },
+  });
+  const loader = new DefaultResourceLoader({
+    cwd: dir,
+    agentDir: dir,
+    settingsManager: settings,
+    noExtensions: true,
+    noSkills: true,
+    noThemes: true,
+    noPromptTemplates: true,
+    noContextFiles: true,
+    extensionFactories: [(pi) => void installChain(pi, config())],
+  });
+  await loader.reload();
+  const { session } = await createAgentSession({
+    cwd: dir,
+    agentDir: dir,
+    modelRuntime: runtime,
+    model: runtime.getModel("fixture", "a")!,
+    resourceLoader: loader,
+    settingsManager: settings,
+    sessionManager: SessionManager.create(dir, join(dir, "sessions")),
+    tools: [],
+  });
+  try {
+    const before = settings.getSettings();
+    assert.equal(before.retry, undefined);
+    await session.setModel(runtime.getModel("chain", "probe")!);
+    await session.prompt("works without retry settings");
+    assert.deepEqual(calls, ["a"]);
+    assert.deepEqual(settings.getSettings(), before);
+  } finally {
+    session.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+for (const retry of [
+  { enabled: false, baseDelayMs: 1 },
+  { enabled: true, maxRetries: 0, baseDelayMs: 1 },
+  { enabled: true, maxRetries: 1, baseDelayMs: 1 },
+  { enabled: true, maxRetries: 3, baseDelayMs: 1 },
+  { enabled: true, maxRetries: 5, baseDelayMs: 1 },
+]) {
+  for (const error of ["503 service unavailable", "insufficient_quota"] as const) {
+    test(`exact A/A/A/B recovery and exhaustion across agent retry settings: ${JSON.stringify(retry)} (${error})`, async () => {
+      const f = await fixture(error, (pi) => installChain(pi, config()));
+      try {
+        f.settings.applyOverrides({ retry });
+        const before = f.settings.getSettings();
+        await f.session.setModel(f.runtime.getModel("chain", "probe")!);
+        await f.session.prompt("recover");
+        assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
+        assert.deepEqual(f.settings.getSettings(), before);
+      } finally {
+        await f.close();
+      }
+      const exhausted = await fixture(
+        error,
+        (pi) => installChain(pi, config()),
+        () => "error",
+      );
+      try {
+        exhausted.settings.applyOverrides({ retry });
+        await exhausted.session.setModel(exhausted.runtime.getModel("chain", "probe")!);
+        await exhausted.session.prompt("exhaust");
+        assert.deepEqual(exhausted.calls, ["a", "a", "a", "b", "b", "b"]);
+        await exhausted.session.prompt("remain exhausted");
+        assert.equal(exhausted.calls.length, 6);
+      } finally {
+        await exhausted.close();
+      }
+    });
+  }
 }
+
+test("non-zero retry.provider.maxRetries warns once and surfaces in status without blocking", async () => {
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
+  try {
+    f.settings.applyOverrides({
+      retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, provider: { maxRetries: 1 } },
+    });
+    const before = f.settings.getSettings();
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
+    await f.session.prompt("recover with provider retries configured");
+    assert.deepEqual(f.calls, ["a", "a", "a", "b"]);
+    assert.deepEqual(f.settings.getSettings(), before);
+    const warnings = f.session.sessionManager
+      .getBranch()
+      .filter((e) => e.type === "custom" && e.customType === "model-chain.warning");
+    assert.equal(warnings.length, 1);
+    assert.match(JSON.stringify(warnings[0]), /retry\.provider\.maxRetries is 1/);
+    await f.session.prompt("second turn does not repeat warning");
+    assert.equal(
+      f.session.sessionManager
+        .getBranch()
+        .filter((e) => e.type === "custom" && e.customType === "model-chain.warning").length,
+      1,
+    );
+    await f.session.prompt("/chain-status");
+    const status = f.session.sessionManager
+      .getBranch()
+      .findLast((e) => e.type === "custom_message" && e.customType === "model-chain.status");
+    assert.ok(status?.type === "custom_message");
+    assert.match(String(status.content), /Warning: retry\.provider\.maxRetries is 1/);
+  } finally {
+    await f.close();
+  }
+});
 
 test("image-incompatible targets are skipped without placeholder conversion", async () => {
   const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
@@ -800,7 +936,7 @@ test("image-incompatible targets are skipped without placeholder conversion", as
   }
 });
 
-test("physical selection is unaffected, even with incompatible chain retry settings", async () => {
+test("physical selection is unaffected regardless of retry settings", async () => {
   const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
   try {
     f.settings.applyOverrides({ retry: { enabled: false } });
@@ -1148,6 +1284,66 @@ test("headless status is readable text; applied configs register and remove chai
     assert.ok(f.runtime.getModel("chain", "probe"));
     await f.session.prompt("still routed after apply");
     assert.deepEqual(f.calls, ["a", "a", "a", "b", "b"]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("footer status tracks the active chain model across select, retry, failover, reset, tree and physical switch", async () => {
+  const f = await fixture("insufficient_quota", (pi) => installChain(pi, config()));
+  const statuses: Array<string | undefined> = [];
+  const uiContext = {
+    select: async () => undefined,
+    confirm: async () => false,
+    input: async () => undefined,
+    notify() {},
+    onTerminalInput: () => () => {},
+    setStatus(key: string, text: string | undefined) {
+      if (key === "model-chain") statuses.push(text);
+    },
+    setWorkingMessage() {},
+    setWorkingIndicator() {},
+    setWorkingVisible() {},
+    setHiddenThinkingLabel() {},
+    setWidget() {},
+    setFooter() {},
+    setHeader() {},
+    setTitle() {},
+    custom: async () => undefined,
+    pasteToEditor() {},
+    setEditorText() {},
+    getEditorText: () => "",
+    editor: async () => undefined,
+    setEditorComponent() {},
+    theme: {} as ExtensionContext["ui"]["theme"],
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false }),
+    getToolsExpanded: () => false,
+    setToolsExpanded() {},
+  } as unknown as ExtensionContext["ui"];
+  try {
+    await f.session.bindExtensions({ uiContext });
+    // Initially on physical model fixture/a -> status cleared.
+    assert.equal(statuses.at(-1), undefined);
+
+    await f.session.setModel(f.runtime.getModel("chain", "probe")!);
+    assert.equal(statuses.at(-1), "fixture/a Chain-probe off");
+
+    await f.session.prompt("fall back to b");
+    assert.ok(statuses.includes("fixture/a Chain-probe off (retry 1/2)"));
+    assert.ok(statuses.includes("fixture/a Chain-probe off (retry 2/2)"));
+    assert.equal(statuses.at(-1), "fixture/b Chain-probe off (2/2)");
+
+    const backupLeaf = f.session.sessionManager.getLeafId()!;
+    await f.session.prompt("/chain-reset");
+    assert.equal(statuses.at(-1), "fixture/a Chain-probe off");
+
+    await f.session.navigateTree(backupLeaf, { summarize: false });
+    assert.equal(statuses.at(-1), "fixture/b Chain-probe off (2/2)");
+
+    await f.session.setModel(f.runtime.getModel("fixture", "a")!);
+    assert.equal(statuses.at(-1), undefined);
   } finally {
     await f.close();
   }
