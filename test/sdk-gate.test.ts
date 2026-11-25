@@ -1348,3 +1348,158 @@ test("footer status tracks the active chain model across select, retry, failover
     await f.close();
   }
 });
+
+function cachedProvider(): ProviderConfig {
+  return {
+    api: "openai-completions",
+    apiKey: "fixture-not-a-secret",
+    baseUrl: "https://invalid.example",
+    models: [
+      {
+        id: "warm",
+        name: "warm",
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 128000,
+        maxTokens: 1024,
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        promptCache: { short: 300 },
+      },
+    ],
+    streamSimple(model) {
+      const stream = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        role: "assistant",
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now(),
+        content: [{ type: "text", text: "cached reply" }],
+        stopReason: "stop",
+        usage: {
+          input: 50_000,
+          output: 10,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 50_010,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      };
+      stream.push({ type: "start", partial: message });
+      stream.push({ type: "done", reason: "stop", message });
+      stream.end();
+      return stream;
+    },
+  };
+}
+
+test("a compacted physical-model session keeps idle cache warming active", async () => {
+  const f = await fixture("insufficient_quota", (pi) => {
+    installChain(pi, config());
+    pi.on("session_before_compact", (event) => ({
+      compaction: {
+        summary: "Deterministic summary",
+        firstKeptEntryId: event.preparation.firstKeptEntryId,
+        tokensBefore: event.preparation.tokensBefore,
+      },
+    }));
+  });
+  try {
+    f.runtime.registerProvider("cached", cachedProvider());
+    await f.session.setModel(f.runtime.getModel("cached", "warm")!);
+    await f.session.prompt("before compaction");
+    f.settings.applyOverrides({ compaction: { keepRecentTokens: 1, reserveTokens: 1024 } });
+    await f.session.compact();
+    assert.ok(f.session.sessionManager.getBranch().some((e) => e.type === "compaction"));
+    await f.session.prompt("after compaction");
+    const status = f.session.cacheWarmingStatus;
+    assert.equal(status?.state, "scheduled", JSON.stringify(status));
+  } finally {
+    await f.close();
+  }
+});
+
+test("boundary hooks attach only while a chain model is selected, without duplicates", async () => {
+  const hooks = ["turn_end", "agent_before_settle"] as const;
+  const active = { turn_end: 0, agent_before_settle: 0 };
+  let attachments = 0;
+  let controller!: ReturnType<typeof installChain>;
+  const f = await fixture("insufficient_quota", (pi) => {
+    // Count live subscriptions per event across extension instances (reload creates a new one).
+    const counted = new Proxy(pi, {
+      get(target, key, receiver) {
+        if (key !== "on") return Reflect.get(target, key, receiver);
+        return (event: string, handler: never) => {
+          const unsubscribe = (target.on as (e: string, h: never) => () => void)(event, handler);
+          if (!(hooks as readonly string[]).includes(event)) return unsubscribe;
+          const name = event as (typeof hooks)[number];
+          active[name]++;
+          attachments++;
+          let removed = false;
+          return () => {
+            if (!removed) active[name]--;
+            removed = true;
+            unsubscribe();
+          };
+        };
+      },
+    });
+    controller = installChain(counted, config());
+  });
+  const expectAttached = (attached: boolean) => {
+    for (const hook of hooks) {
+      assert.equal(active[hook], attached ? 1 : 0, hook);
+      assert.equal(f.session.hasExtensionHandlers(hook), attached, hook);
+    }
+  };
+  try {
+    await f.session.bindExtensions({});
+    expectAttached(false);
+
+    const chain = f.runtime.getModel("chain", "probe")!;
+    const physical = f.runtime.getModel("fixture", "b")!;
+    for (let round = 0; round < 3; round++) {
+      await f.session.setModel(chain);
+      expectAttached(true);
+      await f.session.setModel(physical);
+      expectAttached(false);
+    }
+    assert.equal(attachments, 6);
+
+    await f.session.prompt("physical turn");
+    expectAttached(false);
+    const physicalLeaf = f.session.sessionManager.getLeafId()!;
+
+    await f.session.setModel(chain);
+    await f.session.prompt("fall back");
+    assert.deepEqual(f.calls.slice(-4), ["a", "a", "a", "b"]);
+    expectAttached(true);
+    await f.session.navigateTree(physicalLeaf, { summarize: false });
+    expectAttached(true);
+    assert.equal(attachments, 8);
+
+    // Deleting the selected chain detaches; restoring it reattaches once.
+    controller.apply(
+      parseConfig({
+        version: 1,
+        chains: { spare: [{ provider: "fixture", model: "b", effort: "off" }] },
+      }),
+    );
+    expectAttached(false);
+    controller.apply(config());
+    expectAttached(true);
+    controller.apply(config());
+    expectAttached(true);
+    assert.equal(attachments, 10);
+
+    // Reload shuts the old instance down; the new instance attaches exactly once.
+    await f.session.reload();
+    expectAttached(true);
+    assert.equal(attachments, 12);
+
+    await f.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    expectAttached(false);
+  } finally {
+    await f.close();
+  }
+});
