@@ -212,6 +212,7 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       register(chain);
       registered.add(chain);
     }
+    syncBoundaryHooks(activeModel);
   }
   function register(chain: string) {
     pi.registerVirtualModel({
@@ -220,6 +221,7 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       name: `Chain: ${chain}`,
       input: ["text", "image"],
       async route(request, ctx) {
+        syncBoundaryHooks(ctx.model);
         const targets = config.chains[chain];
         if (!targets) throw new Error(`Chain ${chain} is no longer configured`);
         validate(ctx, chain);
@@ -311,105 +313,138 @@ export function installChain(pi: ExtensionAPI, initial: Config, options: ChainOp
       },
     });
   }
-  apply(initial);
-  pi.on("turn_end", (event, ctx) => {
-    const chain = selected(ctx);
-    if (!chain || event.message.role !== "assistant") return;
-    const state = read(ctx, chain);
-    const target = config.chains[chain][state.index];
-    if (
-      event.message.provider !== target.provider ||
-      event.message.model !== target.model ||
-      state.lastEntryId === event.messageEntryId
-    )
-      return;
-    const recover = eligible(event.message);
-    const model = ctx.modelRegistry.find(target.provider, target.model);
-    const successful =
-      event.message.stopReason !== "error" &&
-      event.message.stopReason !== "aborted" &&
-      !isRecoverableLength(event.message, model?.maxTokens ?? 0);
-    const retry = pi.getSettings().retry;
-    const nativeRetry = retry?.enabled !== false && (retry?.maxRetries ?? 3) > 0;
-    const nextState: State = {
-      ...state,
-      failures: recover ? state.failures + 1 : successful ? 0 : state.failures,
-      pendingDelay: recover && (!isRetryableAssistantError(event.message) || !nativeRetry),
-      lastEntryId: event.messageEntryId,
-    };
-    syncStatus(ctx, { chain, state: nextState });
-    return {
-      entries: [
-        ...event.entries,
-        // Commit omission at the turn boundary too: queued user work can run before
-        // final settlement. Never project a failed draft or its partial tool calls.
-        ...(recover
-          ? [{ type: "context_edit" as const, targetId: event.messageEntryId, replacement: null }]
-          : []),
-        {
-          type: "custom",
-          customType: ENTRY,
-          data: nextState,
-        },
-      ],
-    };
-  });
-  pi.on("agent_before_settle", async (event, ctx) => {
-    const chain = selected(ctx);
-    if (!chain) return;
-    const state = read(ctx, chain);
-    if (state.exhausted) return;
-    const last = ctx.sessionManager
-      .getBranch()
-      .findLast((entry) => entry.type === "message" && entry.message.role === "assistant");
-    if (
-      last?.type !== "message" ||
-      last.message.role !== "assistant" ||
-      state.lastEntryId !== last.id ||
-      !eligible(last.message)
-    )
-      return;
-    validate(ctx, chain);
-    const exhaustedTarget = state.failures >= RETRIES + 1;
-    let next = {
-      ...state,
-      index: state.index + (exhaustedTarget ? 1 : 0),
-      failures: exhaustedTarget ? 0 : state.failures,
-      pendingDelay: true,
-    };
-    const result = available(ctx, chain, next, event.context.llmMessages);
-    next = result.state;
-    if (!result.model) {
-      const exhausted: State = {
-        ...next,
-        index: state.index,
-        target: state.target,
-        failures: state.failures,
-        exhausted: true,
-        pendingDelay: false,
-      };
-      syncStatus(ctx, { chain, state: exhausted });
-      return {
-        entries: [
-          ...event.entries,
-          {
-            type: "custom",
-            customType: ENTRY,
-            data: exhausted,
-          },
-        ],
-      };
+  // Pi re-projects the session context after every turn_end/agent_before_settle dispatch
+  // whenever any handler is registered, which invalidates idle cache warming in compacted
+  // sessions. Register them only while a configured chain model is selected.
+  let boundaryHooks: (() => void)[] | undefined;
+  let activeModel: ExtensionContext["model"];
+  function syncBoundaryHooks(model: ExtensionContext["model"]) {
+    activeModel = model;
+    if (chainForModel(model)) boundaryHooks ??= attachBoundaryHooks();
+    else {
+      for (const unsubscribe of boundaryHooks ?? []) unsubscribe();
+      boundaryHooks = undefined;
     }
-    syncStatus(ctx, { chain, state: next });
-    return {
-      entries: [...event.entries, { type: "custom", customType: ENTRY, data: next }],
-      continue: true,
-    };
+  }
+  function attachBoundaryHooks() {
+    return [
+      pi.on("turn_end", (event, ctx) => {
+        const chain = selected(ctx);
+        if (!chain || event.message.role !== "assistant") return;
+        const state = read(ctx, chain);
+        const target = config.chains[chain][state.index];
+        if (
+          event.message.provider !== target.provider ||
+          event.message.model !== target.model ||
+          state.lastEntryId === event.messageEntryId
+        )
+          return;
+        const recover = eligible(event.message);
+        const model = ctx.modelRegistry.find(target.provider, target.model);
+        const successful =
+          event.message.stopReason !== "error" &&
+          event.message.stopReason !== "aborted" &&
+          !isRecoverableLength(event.message, model?.maxTokens ?? 0);
+        const retry = pi.getSettings().retry;
+        const nativeRetry = retry?.enabled !== false && (retry?.maxRetries ?? 3) > 0;
+        const nextState: State = {
+          ...state,
+          failures: recover ? state.failures + 1 : successful ? 0 : state.failures,
+          pendingDelay: recover && (!isRetryableAssistantError(event.message) || !nativeRetry),
+          lastEntryId: event.messageEntryId,
+        };
+        syncStatus(ctx, { chain, state: nextState });
+        return {
+          entries: [
+            ...event.entries,
+            // Commit omission at the turn boundary too: queued user work can run before
+            // final settlement. Never project a failed draft or its partial tool calls.
+            ...(recover
+              ? [
+                  {
+                    type: "context_edit" as const,
+                    targetId: event.messageEntryId,
+                    replacement: null,
+                  },
+                ]
+              : []),
+            {
+              type: "custom",
+              customType: ENTRY,
+              data: nextState,
+            },
+          ],
+        };
+      }),
+      pi.on("agent_before_settle", async (event, ctx) => {
+        const chain = selected(ctx);
+        if (!chain) return;
+        const state = read(ctx, chain);
+        if (state.exhausted) return;
+        const last = ctx.sessionManager
+          .getBranch()
+          .findLast((entry) => entry.type === "message" && entry.message.role === "assistant");
+        if (
+          last?.type !== "message" ||
+          last.message.role !== "assistant" ||
+          state.lastEntryId !== last.id ||
+          !eligible(last.message)
+        )
+          return;
+        validate(ctx, chain);
+        const exhaustedTarget = state.failures >= RETRIES + 1;
+        let next = {
+          ...state,
+          index: state.index + (exhaustedTarget ? 1 : 0),
+          failures: exhaustedTarget ? 0 : state.failures,
+          pendingDelay: true,
+        };
+        const result = available(ctx, chain, next, event.context.llmMessages);
+        next = result.state;
+        if (!result.model) {
+          const exhausted: State = {
+            ...next,
+            index: state.index,
+            target: state.target,
+            failures: state.failures,
+            exhausted: true,
+            pendingDelay: false,
+          };
+          syncStatus(ctx, { chain, state: exhausted });
+          return {
+            entries: [
+              ...event.entries,
+              {
+                type: "custom",
+                customType: ENTRY,
+                data: exhausted,
+              },
+            ],
+          };
+        }
+        syncStatus(ctx, { chain, state: next });
+        return {
+          entries: [...event.entries, { type: "custom", customType: ENTRY, data: next }],
+          continue: true,
+        };
+      }),
+    ];
+  }
+  apply(initial);
+  pi.on("session_start", (_event, ctx) => {
+    syncBoundaryHooks(ctx.model);
+    syncStatus(ctx);
   });
-  pi.on("session_start", (_event, ctx) => syncStatus(ctx));
-  pi.on("model_select", (event, ctx) => syncStatus(ctx, { chain: chainForModel(event.model) }));
-  pi.on("session_tree", (_event, ctx) => syncStatus(ctx));
+  pi.on("model_select", (event, ctx) => {
+    syncBoundaryHooks(event.model);
+    syncStatus(ctx, { chain: chainForModel(event.model) });
+  });
+  pi.on("session_tree", (_event, ctx) => {
+    syncBoundaryHooks(ctx.model);
+    syncStatus(ctx);
+  });
   pi.on("session_shutdown", (_event, ctx) => {
+    syncBoundaryHooks(undefined);
     if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
   });
   function view(ctx: ExtensionContext, chain: string): ChainView {
