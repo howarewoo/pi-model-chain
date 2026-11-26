@@ -110,14 +110,19 @@ chains by name or model. Each row shows the chain's badges (`selected`, `ready`,
 | `^S`          |                                     | Validate and save                        |
 | `Esc`         | Close                               | Back; asks again if edits are unsaved    |
 
-The **model picker** keeps its search box focused: type to filter by name, provider or
-model ID, and use `Tab`/`Shift+Tab` to switch provider tabs. Rows show context window,
+The **model picker** lists the same models as Pi's built-in `/model` picker: the models
+scoped for this session with `--models` or `enabledModels` (as `/scoped-models` shows), or,
+with no scope set, the models Pi has authentication for. Models and providers outside that
+set are hidden. The search box keeps focus: type to filter by name, provider or model ID, and
+use `Tab`/`Shift+Tab` to switch between the listed providers. Rows show context window,
 price per million tokens, vision support and whether authentication is configured.
-`Enter` opens an inline strip with only the efforts that model supports; `←`/`→` choose one
-and `Enter` adds it. Virtual models, efforts outside the session's model scope, unsupported
-efforts and targets already in the chain stay visible with an inline reason but cannot be
-picked. A model without configured authentication can be added but is skipped at runtime
-until you log in. `Esc` closes the strip, then returns to the editor with your edits intact.
+`Enter` opens an inline strip with only the efforts that model supports and the session
+scope allows (a scope such as `anthropic/*:high` offers only `high`); `←`/`→` choose one
+and `Enter` adds it. Virtual models, models with unknown limits and targets already in the
+chain stay visible with an inline reason but cannot be picked. A scoped model without
+configured authentication can be added but is skipped at runtime until you log in. A chain
+that already has a step outside the session scope still appears in the list, and the editor
+marks that step so you can fix it; the chain is refused before dispatch until you do. `Esc` closes the strip, then returns to the editor with your edits intact.
 
 Saving validates the chain (name, at least one step, no duplicates or virtual targets),
 writes `model-chain.json` atomically with owner-only permissions, and registers or removes

@@ -58,6 +58,7 @@ const model = (
   name,
   providerLabel: provider,
   virtual: false,
+  listed: true,
   auth: true,
   efforts: efforts("off", "low", "medium", "high"),
   contextWindow: 200_000,
