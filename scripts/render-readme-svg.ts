@@ -172,7 +172,7 @@ const height = 52 + lines.length * lineHeight + 20;
 const svg = [
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
   '<title id="title">Model chain manager and model picker</title>',
-  '<desc id="desc">The /chain overlay listing three chains with status badges and ordered steps, above the model picker with provider tabs, aligned context, cost, vision and auth columns, and the inline effort strip. Rendered from the production components with synthetic data; not a terminal screenshot.</desc>',
+  '<desc id="desc">The /chain overlay listing three chains with status badges and ordered steps, above the model picker with a provider column, aligned context, cost, vision and auth columns, and the inline effort strip. Rendered from the production components with synthetic data; not a terminal screenshot.</desc>',
   `<rect width="100%" height="100%" rx="8" fill="${background}"/>`,
   `<text x="20" y="30" fill="#9a9a9a" font-family="Menlo, monospace" font-size="12">ILLUSTRATION · /chain manager and model picker · synthetic data</text>`,
 ];

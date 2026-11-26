@@ -108,3 +108,34 @@ export function frame(theme: PanelTheme, title: string, body: string[], width: n
     theme.fg("border", `╰${"─".repeat(width - 2)}╯`),
   ];
 }
+
+/**
+ * Draw an overlay of exactly `height` rows: the title in the top border, the body, a separator
+ * and the footer. With `listWidth` and a detail column, the body is two columns split by `│`.
+ */
+export function panel(
+  theme: PanelTheme,
+  title: string,
+  parts: { list: string[]; detail?: string[]; footer: string[] },
+  width: number,
+  height: number,
+  listWidth = 0,
+): string[] {
+  const inner = Math.max(0, width - 4);
+  const split = listWidth > 0 && parts.detail !== undefined;
+  const detailWidth = inner - listWidth - 3;
+  const rows = Math.max(0, height - 3 - parts.footer.length);
+  const body = Array.from({ length: rows }, (_, index) =>
+    split
+      ? cell(parts.list[index] ?? "", listWidth) +
+        theme.fg("border", " │ ") +
+        cell(parts.detail![index] ?? "", detailWidth)
+      : (parts.list[index] ?? ""),
+  );
+  const framed = frame(theme, title, [...body, ...parts.footer], width);
+  const separator = split
+    ? `├${"─".repeat(listWidth + 2)}┴${"─".repeat(detailWidth + 2)}┤`
+    : `├${"─".repeat(Math.max(0, width - 2))}┤`;
+  framed.splice(1 + rows, 0, theme.fg("border", separator));
+  return framed;
+}

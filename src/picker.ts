@@ -17,6 +17,7 @@ import {
   hints,
   keyText,
   modelIdentity,
+  panel,
   price,
   safe,
   tokenCount,
@@ -32,9 +33,13 @@ export interface PickerOptions {
   preferredEffort?: ModelThinkingLevel;
 }
 
+/** Frames this wide or wider show the provider column; narrower ones show a provider line. */
+export const PROVIDER_COLUMN_WIDTH = 72;
+
 /**
- * Model and effort picker. The search input always has focus while browsing; Tab/Shift+Tab cycle
- * provider tabs; Enter opens an inline strip of the model's supported efforts and a second Enter
+ * Model and effort picker. A provider column ("All" first) sits left of the search box and model
+ * list; ←/→ move between them and ↑/↓ move within the focused one. Typing always edits the
+ * search. Enter on a model opens an inline strip of its supported efforts and a second Enter
  * picks. Only the models and efforts Pi offers this session are listed (its model scope, or its
  * available models when no scope is set); other ineligible ones stay visible with their reason
  * but cannot be picked.
@@ -51,6 +56,7 @@ export function createModelPicker(
   const input = new Input({ prompt: "Search: ", placeholder: "name, provider or ID" });
   let snapshot = catalog();
   let provider = "";
+  let column: "providers" | "models" = "models";
   let selected = 0;
   let effort: ModelThinkingLevel | undefined;
   let notice = "";
@@ -85,6 +91,12 @@ export function createModelPicker(
       allowed[0]
     )?.effort;
   };
+  const moveProvider = (delta: number) => {
+    const list = providers();
+    const index = Math.max(0, list.indexOf(provider));
+    provider = list[Math.max(0, Math.min(list.length - 1, index + delta))];
+    selected = 0;
+  };
 
   const component: Component & Focusable = {
     capturesViewportInput: true,
@@ -101,45 +113,59 @@ export function createModelPicker(
       const inner = Math.max(0, width - 4);
       const cancel = keyText(keys, "tui.select.cancel");
       const confirm = keyText(keys, "tui.select.confirm");
-      if (width < 44 || height < 12)
-        return frame(
-          theme,
-          "Pick a model",
-          [`Too small · widen the terminal · ${cancel} back`],
-          width,
-        );
+      const tooSmall = () =>
+        frame(theme, options.title, [`Too small · widen the terminal · ${cancel} back`], width);
+      if (width < 44 || height < 12) return tooSmall();
       const list = matches();
       selected = Math.max(0, Math.min(selected, list.length - 1));
       const entry = list[selected];
       if (!entry) effort = undefined;
       input.focused = focused;
+      const onProviders = column === "providers" && !effort;
 
-      const tabs = providers();
-      const active = Math.max(0, tabs.indexOf(provider));
-      const tab = (index: number) =>
-        index === active
-          ? theme.style(` ${safe(tabs[index] || "All")} `, {
-              fg: "accent",
-              bold: true,
-              inverse: true,
-            })
-          : theme.fg("muted", ` ${safe(tabs[index] || "All")} `);
-      // Scroll the tabs so the active one stays visible.
-      let first = 0;
-      const span = (from: number) =>
-        tabs
-          .slice(from, active + 1)
-          .reduce((sum, _, i) => sum + visibleWidth(tab(from + i)) + 1, 2);
-      while (first < active && span(first) > inner) first++;
-      const tabLine = truncateToWidth(
-        (first ? theme.fg("muted", "… ") : "") +
-          tabs
-            .slice(first)
-            .map((_, i) => tab(first + i))
-            .join(" "),
-        inner,
-        "…",
-      );
+      // Provider column: "All" first, then each provider with its matching-model count.
+      const names = providers();
+      if (!names.includes(provider)) provider = "";
+      const query = input.getValue();
+      const count = (name: string) => filterCatalog(snapshot, query, name).length;
+      const label = (name: string) => safe(name || "All");
+      const split = width >= PROVIDER_COLUMN_WIDTH;
+      const columnWidth = split
+        ? Math.min(
+            24,
+            Math.floor(inner / 4),
+            Math.max(
+              ...names.map(
+                (name) => visibleWidth(label(name)) + 2 + String(count(name)).length + 1,
+              ),
+            ),
+          )
+        : 0;
+      const right = split ? inner - columnWidth - 3 : inner;
+      const marker = (current: boolean, active: boolean) =>
+        current ? (active ? theme.fg("accent", "❯") : theme.fg("muted", "›")) : " ";
+      const providerRow = (name: string) => {
+        const current = name === provider;
+        const matched = count(name);
+        const tally = theme.fg(matched ? "muted" : "dim", String(matched));
+        return `${marker(current, onProviders)} ${cell(
+          theme.style(label(name), {
+            fg: current && onProviders ? "accent" : current ? "text" : matched ? "muted" : "dim",
+            bold: current,
+          }),
+          columnWidth - 3 - visibleWidth(tally),
+        )} ${tally}`;
+      };
+      const providerLine = () => {
+        const index = Math.max(0, names.indexOf(provider));
+        const matched = count(provider);
+        const name = theme.style(label(provider), {
+          fg: onProviders ? "accent" : "text",
+          bold: true,
+        });
+        const tally = `· ${matched} model${matched === 1 ? "" : "s"} · ${index + 1}/${names.length}`;
+        return `${marker(true, onProviders)} ${theme.fg("muted", "Provider")} ${name} ${theme.fg("muted", tally)}`;
+      };
 
       const detail = entry
         ? [
@@ -183,29 +209,30 @@ export function createModelPicker(
         : why
           ? wrapTextWithAnsi(theme.fg("warning", `Not selectable: ${safe(why)}`), inner)
           : [];
-      const footer = hints(
-        theme,
-        effort
-          ? ["←/→ effort", `${confirm} pick`, `${cancel} back to models`]
-          : [
-              "type to search",
-              "↑/↓ move",
-              "Tab/Shift+Tab provider",
-              `${confirm} choose effort`,
-              `${cancel} cancel`,
-            ],
-        inner,
-      );
-      const prefix = [tabLine, ...input.render(inner), ""];
-      const suffix = ["", truncateToWidth(detail, inner, "…"), ...strip, ...status, ...footer];
-      const room = height - 2 - prefix.length - suffix.length;
-      if (room < 1)
-        return frame(
+      const footer = [
+        ...(detail ? [truncateToWidth(detail, inner, "…")] : []),
+        ...strip,
+        ...status,
+        ...hints(
           theme,
-          "Pick a model",
-          [`Too small · widen the terminal · ${cancel} back`],
-          width,
-        );
+          effort
+            ? ["←/→ effort", `${confirm} pick`, `${cancel} back to models`]
+            : onProviders
+              ? ["↑/↓ provider", `→/${confirm} models`, "type to search", `${cancel} cancel`]
+              : [
+                  "type to search",
+                  "↑/↓ move",
+                  "← providers",
+                  `${confirm} choose effort`,
+                  `${cancel} cancel`,
+                ],
+          inner,
+        ),
+      ];
+      const prefix = [...(split ? [] : [providerLine()]), ...input.render(right), ""];
+      const body = height - 3 - footer.length;
+      const room = body - prefix.length;
+      if (room < 1) return tooSmall();
 
       // Right-aligned columns sized over the whole snapshot so they stay put while searching.
       const auth = (item: CatalogEntry) =>
@@ -221,7 +248,7 @@ export function createModelPicker(
           width: Math.max(0, ...listed().map((item) => visibleWidth(column.cell(item)))),
         }))
         .filter((column) => column.width);
-      const nameRoom = () => inner - 2 - columns.reduce((sum, column) => sum + column.width + 2, 0);
+      const nameRoom = () => right - 2 - columns.reduce((sum, column) => sum + column.width + 2, 0);
       // Narrow panes drop vision, then price, then context; auth status always stays.
       for (const key of ["vision", "price", "context"]) {
         if (nameRoom() >= 24) break;
@@ -232,16 +259,12 @@ export function createModelPicker(
       const results = list.slice(start, start + room).map((item) => {
         const current = item === entry;
         const blocked = !!reason(item);
-        return `${current ? theme.fg("accent", "❯") : " "} ${cell(
-          modelIdentity(
-            theme,
-            item.provider,
-            item.model,
-            nameRoom(),
-            current ? "accent" : blocked ? "dim" : "text",
-          ),
-          nameRoom(),
-        )}${columns
+        const color = current && !onProviders ? "accent" : blocked ? "dim" : "text";
+        // A selected provider is implied, so its rows give the whole width to the model ID.
+        const name = provider
+          ? theme.fg(color, safe(item.model))
+          : modelIdentity(theme, item.provider, item.model, nameRoom(), color);
+        return `${marker(current, !onProviders)} ${cell(name, nameRoom())}${columns
           .map((column) => {
             const text = column.cell(item);
             const color = column.key === "auth" && text !== "auth ✓" ? "warning" : "muted";
@@ -251,16 +274,38 @@ export function createModelPicker(
       });
       if (!results.length)
         results.push(
-          theme.fg(
-            "muted",
-            snapshot.error ??
-              (listed().length
-                ? "No matching models. Change the search or provider."
-                : "No models available in this session."),
+          ...wrapTextWithAnsi(
+            theme.fg(
+              "muted",
+              snapshot.error ??
+                (listed().length
+                  ? provider && count("")
+                    ? `No ${safe(provider)} models match. ← to pick another provider, or change the search.`
+                    : "No matching models. Change the search."
+                  : "No models available in this session."),
+            ),
+            right,
           ),
         );
-      while (results.length < room) results.push("");
-      return frame(theme, options.title, [...prefix, ...results, ...suffix], width);
+      const models = [...prefix, ...results];
+      if (!split) return panel(theme, options.title, { list: models, footer }, width, height);
+      const pStart = Math.max(
+        0,
+        Math.min(names.indexOf(provider) - Math.floor((body - 2) / 2), names.length - (body - 2)),
+      );
+      const left = [
+        theme.fg("muted", "Providers"),
+        "",
+        ...names.slice(pStart, pStart + body - 2).map(providerRow),
+      ];
+      return panel(
+        theme,
+        options.title,
+        { list: left, detail: models, footer },
+        width,
+        height,
+        columnWidth,
+      );
     },
     handleInput(data) {
       if (keys.matches(data, "tui.select.cancel")) {
@@ -301,18 +346,18 @@ export function createModelPicker(
           notice = rejection;
         }
       } else {
-        // Any other key closes the strip and applies to the list.
+        // Any other key closes the strip and applies to the focused column.
         effort = undefined;
         notice = "";
-        if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
-          const tabs = providers();
-          const delta = matchesKey(data, "shift+tab") ? -1 : 1;
-          provider =
-            tabs[(Math.max(0, tabs.indexOf(provider)) + delta + tabs.length) % tabs.length];
-          selected = 0;
-        } else if (keys.matches(data, "tui.select.up")) selected = Math.max(0, selected - 1);
-        else if (keys.matches(data, "tui.select.down"))
-          selected = Math.min(Math.max(0, list.length - 1), selected + 1);
+        const up = keys.matches(data, "tui.select.up");
+        const down = keys.matches(data, "tui.select.down");
+        if (matchesKey(data, "left")) column = "providers";
+        else if (matchesKey(data, "right")) column = "models";
+        else if (column === "providers" && (up || down)) moveProvider(up ? -1 : 1);
+        else if (column === "providers" && keys.matches(data, "tui.select.confirm"))
+          column = "models";
+        else if (up) selected = Math.max(0, selected - 1);
+        else if (down) selected = Math.min(Math.max(0, list.length - 1), selected + 1);
         else if (keys.matches(data, "tui.select.confirm")) {
           if (entry) {
             const why = reason(entry);
@@ -320,9 +365,13 @@ export function createModelPicker(
             else openStrip(entry);
           }
         } else {
+          // Typing always edits the search, which belongs to the model list.
           const before = input.getValue();
           input.handleInput(data);
-          if (input.getValue() !== before) selected = 0;
+          if (input.getValue() !== before) {
+            selected = 0;
+            column = "models";
+          }
         }
       }
       requestRender();
