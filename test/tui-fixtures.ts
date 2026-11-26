@@ -117,3 +117,25 @@ export const catalog: Catalog = {
     },
   ],
 };
+
+/** The shared catalogue plus a listed model with a long provider and model ID. */
+export const longCatalog: Catalog = {
+  entries: [
+    ...catalog.entries,
+    {
+      provider: "amazon-bedrock",
+      model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      name: "Claude Sonnet 4.5 (Bedrock US)",
+      providerLabel: "Amazon Bedrock",
+      virtual: false,
+      listed: true,
+      auth: true,
+      efforts: efforts("off", "high"),
+      contextWindow: 200_000,
+      maxTokens: 64_000,
+      cost: { input: 3.3, output: 16.5 },
+      vision: true,
+      reasoning: true,
+    },
+  ],
+};
