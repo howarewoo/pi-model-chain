@@ -35,7 +35,9 @@ export interface PickerOptions {
 /**
  * Model and effort picker. The search input always has focus while browsing; Tab/Shift+Tab cycle
  * provider tabs; Enter opens an inline strip of the model's supported efforts and a second Enter
- * picks. Ineligible models and efforts stay visible with their reason but cannot be picked.
+ * picks. Only the models and efforts Pi offers this session are listed (its model scope, or its
+ * available models when no scope is set); other ineligible ones stay visible with their reason
+ * but cannot be picked.
  */
 export function createModelPicker(
   catalog: () => Catalog,
@@ -55,7 +57,10 @@ export function createModelPicker(
   let focused = false;
   let width = 80;
   const matches = () => filterCatalog(snapshot, input.getValue(), provider);
-  const providers = () => ["", ...new Set(snapshot.entries.map((entry) => entry.provider))];
+  const listed = () => snapshot.entries.filter((entry) => entry.listed);
+  const providers = () => ["", ...new Set(listed().map((entry) => entry.provider))];
+  /** Efforts in the session scope; the rest are hidden, not offered with a reason. */
+  const efforts = (entry: CatalogEntry) => entry.efforts.filter((item) => !item.reason);
   const target = (entry: CatalogEntry, value: ModelThinkingLevel): Target => ({
     provider: entry.provider,
     model: entry.model,
@@ -65,15 +70,15 @@ export function createModelPicker(
     value
       ? targetReason(snapshot, target(entry, value), options.taken)
       : (entry.reason ??
-        (entry.efforts.some(
+        (efforts(entry).some(
           ({ effort }) => !targetReason(snapshot, target(entry, effort), options.taken),
         )
           ? undefined
-          : entry.efforts.length === 1
-            ? targetReason(snapshot, target(entry, entry.efforts[0].effort), options.taken)
-            : "No eligible effort (scope or already in chain)"));
+          : efforts(entry).length === 1
+            ? targetReason(snapshot, target(entry, efforts(entry)[0].effort), options.taken)
+            : "Every effort is already in this chain"));
   const openStrip = (entry: CatalogEntry) => {
-    const allowed = entry.efforts.filter(({ effort }) => !reason(entry, effort));
+    const allowed = efforts(entry).filter(({ effort }) => !reason(entry, effort));
     effort = (
       allowed.find((item) => item.effort === options.preferredEffort) ??
       allowed.find((item) => item.effort !== "off") ??
@@ -158,7 +163,7 @@ export function createModelPicker(
       const strip =
         entry && effort
           ? wrapTextWithAnsi(
-              `${theme.fg("muted", "Effort ")}${entry.efforts
+              `${theme.fg("muted", "Effort ")}${efforts(entry)
                 .map(({ effort: value }) => {
                   const ok = !reason(entry, value);
                   return value === effort
@@ -213,7 +218,7 @@ export function createModelPicker(
       ]
         .map((column) => ({
           ...column,
-          width: Math.max(0, ...snapshot.entries.map((item) => visibleWidth(column.cell(item)))),
+          width: Math.max(0, ...listed().map((item) => visibleWidth(column.cell(item)))),
         }))
         .filter((column) => column.width);
       const nameRoom = () => inner - 2 - columns.reduce((sum, column) => sum + column.width + 2, 0);
@@ -249,9 +254,9 @@ export function createModelPicker(
           theme.fg(
             "muted",
             snapshot.error ??
-              (snapshot.entries.length
+              (listed().length
                 ? "No matching models. Change the search or provider."
-                : "No models in the host catalogue."),
+                : "No models available in this session."),
           ),
         );
       while (results.length < room) results.push("");
@@ -271,8 +276,8 @@ export function createModelPicker(
       const entry = list[selected];
       if (effort && entry && (matchesKey(data, "left") || matchesKey(data, "right"))) {
         // Ineligible efforts stay reachable so their reason can be read.
-        const index = entry.efforts.findIndex((item) => item.effort === effort);
-        const next = entry.efforts[index + (matchesKey(data, "left") ? -1 : 1)];
+        const index = efforts(entry).findIndex((item) => item.effort === effort);
+        const next = efforts(entry)[index + (matchesKey(data, "left") ? -1 : 1)];
         if (next) effort = next.effort;
         notice = "";
       } else if (effort && entry && keys.matches(data, "tui.select.confirm")) {
@@ -281,7 +286,13 @@ export function createModelPicker(
         else {
           // Recheck against a fresh snapshot so auth or scope changes are not missed.
           snapshot = catalog();
-          const rejection = targetReason(snapshot, target(entry, effort), options.taken);
+          const fresh = snapshot.entries.find(
+            (item) => item.provider === entry.provider && item.model === entry.model,
+          );
+          const rejection =
+            fresh?.listed && efforts(fresh).some((item) => item.effort === effort)
+              ? targetReason(snapshot, target(entry, effort), options.taken)
+              : (snapshot.error ?? "No longer available in this session");
           if (!rejection) {
             done(target(entry, effort));
             return;

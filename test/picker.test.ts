@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { filterCatalog, targetReason } from "../src/catalog.ts";
+import { filterCatalog, targetReason, type Catalog } from "../src/catalog.ts";
 import type { Target } from "../src/config.ts";
 import { createModelPicker, type PickerOptions } from "../src/picker.ts";
 import { catalog, KEY, keys, plain, theme } from "./tui-fixtures.ts";
 
-function picker(options: Partial<PickerOptions> = {}, height = 22) {
+function picker(options: Partial<PickerOptions> = {}, height = 22, read = () => catalog) {
   let result: Target | undefined;
   let finished = false;
   const component = createModelPicker(
-    () => catalog,
+    read,
     { title: "Add a step", taken: [], ...options },
     theme,
     keys,
@@ -47,6 +47,7 @@ test("catalog search covers name, provider label, provider and model ID", () => 
     );
   assert.equal(filterCatalog(catalog, "", "openai").length, 2);
   assert.deepEqual(filterCatalog(catalog, "no-such-model"), []);
+  assert.deepEqual(filterCatalog(catalog, "gemini"), [], "unlisted models are not searchable");
 });
 
 test("target reasons reject virtual, unsupported, out-of-scope and duplicate targets, not missing auth", () => {
@@ -71,6 +72,10 @@ test("target reasons reject virtual, unsupported, out-of-scope and duplicate tar
 
 test("search always has focus and filters live; provider tabs cycle with Tab and Shift+Tab", () => {
   const p = picker();
+  assert.ok(
+    !p.render().some((line) => /google|gemini/.test(line)),
+    "models outside Pi's set and their providers are hidden, not shown disabled",
+  );
   assert.deepEqual(rowsOf(p.render()), [
     "anthropic/claude-sonnet-4-5",
     "openai/gpt-4.1",
@@ -85,7 +90,13 @@ test("search always has focus and filters live; provider tabs cycle with Tab and
   assert.deepEqual(rowsOf(p.render()), ["anthropic/claude-sonnet-4-5"]);
   p.send(KEY.tab);
   assert.deepEqual(rowsOf(p.render()), ["openai/gpt-4.1", "openai/o4-mini"]);
-  p.send(KEY.shiftTab, KEY.shiftTab);
+  p.send(KEY.tab);
+  assert.deepEqual(
+    rowsOf(p.render()),
+    ["chain/work"],
+    "no tab for a provider with no listed model",
+  );
+  p.send(KEY.shiftTab, KEY.shiftTab, KEY.shiftTab);
   assert.equal(rowsOf(p.render()).length, 4, "Shift+Tab wraps back to All");
 });
 
@@ -118,22 +129,70 @@ test("ineligible models and efforts stay visible with an inline reason but canno
     virtual.render().some((line) => line.includes("Virtual model; chains need physical targets")),
   );
 
-  const scoped = picker();
-  scoped.type("o4");
-  scoped.send(KEY.enter, KEY.right, KEY.right);
-  assert.ok(scoped.render().some((line) => line.includes("Not selectable: Outside this session")));
-  scoped.send(KEY.enter);
-  assert.equal(scoped.finished, false);
-
   const duplicate = picker({
     taken: [{ provider: "openai", model: "gpt-4.1", effort: "off" }],
   });
   duplicate.type("gpt");
   duplicate.send(KEY.enter);
   assert.equal(duplicate.finished, false);
-  assert.ok(
-    duplicate.render().some((line) => /Already in this chain|No eligible effort/.test(line)),
-  );
+  assert.ok(duplicate.render().some((line) => line.includes("Already in this chain")));
+
+  const taken = picker({
+    taken: (["off", "low", "medium", "high"] as const).map((effort) => ({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      effort,
+    })),
+  });
+  taken.send(KEY.enter);
+  assert.ok(taken.render().some((line) => line.includes("Every effort is already in this chain")));
+  assert.ok(!taken.render().some((line) => /scope/i.test(line)));
+});
+
+test("the effort strip offers only efforts in the session scope", () => {
+  const p = picker();
+  p.type("o4");
+  p.send(KEY.enter);
+  const strip = p.render().find((line) => line.includes("Effort"))!;
+  assert.match(strip, /Effort \[◔ low\]\s+◑ medium\s+│$/);
+  assert.ok(!strip.includes("high"), "an out-of-scope effort is hidden");
+  p.send(KEY.right, KEY.right, KEY.right);
+  assert.ok(!p.render().some((line) => /Not selectable|scope/i.test(line)));
+  p.send(KEY.enter);
+  assert.deepEqual(p.result, { provider: "openai", model: "o4-mini", effort: "medium" });
+});
+
+test("picking rechecks a fresh snapshot and refuses a model that lost scope or auth", () => {
+  let current: Catalog = catalog;
+  const p = picker({}, 22, () => current);
+  p.send(KEY.enter);
+  current = {
+    entries: catalog.entries.map((entry) =>
+      entry.model === "claude-sonnet-4-5" ? { ...entry, listed: false } : entry,
+    ),
+  };
+  p.send(KEY.enter);
+  assert.equal(p.finished, false);
+  assert.ok(p.render().some((line) => line.includes("No longer available in this session")));
+  assert.ok(!rowsOf(p.render()).includes("anthropic/claude-sonnet-4-5"));
+
+  current = catalog;
+  const narrowed = picker({}, 22, () => current);
+  narrowed.send(KEY.enter);
+  current = {
+    entries: catalog.entries.map((entry) =>
+      entry.model === "claude-sonnet-4-5"
+        ? {
+            ...entry,
+            efforts: entry.efforts.map((item) =>
+              item.effort === "high" ? item : { ...item, reason: "Outside scope" },
+            ),
+          }
+        : entry,
+    ),
+  };
+  narrowed.send(KEY.enter);
+  assert.equal(narrowed.finished, false, "the chosen effort left the scope");
 });
 
 test("Escape closes the effort strip first, then cancels without a selection", () => {

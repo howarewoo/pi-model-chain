@@ -8,6 +8,11 @@ export interface CatalogEntry {
   name: string;
   providerLabel: string;
   virtual: boolean;
+  /**
+   * Whether the picker lists this model: Pi's session scope when one is set (with at least one
+   * in-scope effort), otherwise Pi's available models, matching the built-in /model picker.
+   */
+  listed: boolean;
   /** Configured authentication; missing auth is allowed but skipped at runtime. */
   auth: boolean;
   /** Supported efforts; a reason marks an effort the current session scope excludes. */
@@ -36,6 +41,11 @@ export function readCatalog(
     const registry = ctx.modelRegistry;
     if (registry.getError()) return { entries: [], error: "Host model metadata is unavailable" };
     const seen = new Set<string>();
+    const available = new Set(
+      ctx.scopedModels.length
+        ? []
+        : registry.getAvailable().map((model) => JSON.stringify([model.provider, model.id])),
+    );
     const entries: CatalogEntry[] = [];
     for (const model of registry.getAll()) {
       const key = JSON.stringify([model.provider, model.id]);
@@ -44,14 +54,12 @@ export function readCatalog(
       const virtual = model.api === "pi-virtual";
       const contextWindow = positive(model.contextWindow);
       const maxTokens = positive(model.maxTokens);
+      const scopes = ctx.scopedModels.filter(
+        (scope) => scope.model.provider === model.provider && scope.model.id === model.id,
+      );
       const scoped = (effort: ModelThinkingLevel) =>
         !ctx.scopedModels.length ||
-        ctx.scopedModels.some(
-          (scope) =>
-            scope.model.provider === model.provider &&
-            scope.model.id === model.id &&
-            (!scope.thinkingLevel || scope.thinkingLevel === effort),
-        );
+        scopes.some((scope) => !scope.thinkingLevel || scope.thinkingLevel === effort);
       const efforts = virtual
         ? []
         : getSupportedThinkingLevels(model).map((effort) =>
@@ -66,6 +74,9 @@ export function readCatalog(
         name: model.name || model.id,
         providerLabel: registry.getProviderDisplayName(model.provider) || model.provider,
         virtual,
+        listed: ctx.scopedModels.length
+          ? efforts.some((item) => !item.reason) || (virtual && scopes.length > 0)
+          : available.has(key),
         auth: !virtual && registry.hasConfiguredAuth(model),
         efforts,
         contextWindow,
@@ -91,10 +102,12 @@ export function readCatalog(
   }
 }
 
+/** Listed entries matching the search and provider tab. */
 export function filterCatalog(catalog: Catalog, query: string, provider = ""): CatalogEntry[] {
   const needle = query.trim().toLocaleLowerCase();
   return catalog.entries.filter(
     (entry) =>
+      entry.listed &&
       (!provider || entry.provider === provider) &&
       `${entry.name} ${entry.providerLabel} ${entry.provider} ${entry.model}`
         .toLocaleLowerCase()
