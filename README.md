@@ -1,347 +1,90 @@
-# @howarewoo/pi-model-chain — Pi extension for named model chains
+# @howarewoo/pi-model-chain
 
 [![npm version](https://img.shields.io/npm/v/@howarewoo/pi-model-chain)](https://www.npmjs.com/package/@howarewoo/pi-model-chain)
 [![npm downloads](https://img.shields.io/npm/dm/@howarewoo/pi-model-chain)](https://www.npmjs.com/package/@howarewoo/pi-model-chain)
 
-Select a named model chain in the [Pi coding agent](https://pi.dev)'s `/model` picker.
-Each physical target gets an initial attempt and **two retries** for eligible provider
-failures, including quota/credit exhaustion. If all three fail, Pi tries the next explicitly
-configured target. A working backup stays selected for later turns until you manually reset.
+A [Pi coding agent](https://pi.dev) extension that lets you pick a named list of models, called a chain, and moves to the next model on the list when the current one keeps failing or runs out of credit.
 
-This is a standalone main-session extension: it neither imports nor reads the configuration
-or state of a subagent extension. Physical model selections keep normal Pi behavior.
-Manage chains in the `/chain` overlay, or edit the JSON config directly.
+![The /chain overlay listing three chains with status badges and ordered steps, above the model picker with a provider column, aligned context, cost, vision and auth columns and the inline effort strip.](docs/images/chain-manager.svg)
 
-[Install](#installation) · [Quick start](#quick-start) · [Manage chains](#manage-chains-with-chain) · [Configuration](#configuration-reference) · [Safety](#recovery-and-safety-boundaries) · [Documentation](#documentation)
+_The `/chain` overlay and model picker, rendered from the production components with synthetic data. Not a terminal screenshot._
 
-## Installation
+## Why use it
 
-Requires **Node 22.19+** and **Pi 1.6.0**, the tested host. Other Pi versions are not
-established as compatible by these tests. Wildcard host peer dependencies follow Pi's
-package format, not a compatibility promise.
+Pi's own retries try the same model again. When a provider is down or your credit runs out, you have to notice and switch models yourself. A chain does that switch for you:
 
-Install from npm:
+- Each model in the chain gets one attempt and two retries. If all three fail with a provider outage, a dropped connection or a quota or credit error, Pi moves to the next model.
+- A backup that works stays selected for later turns until you run `/chain-reset`.
+- Pi only moves to the models you listed, in your order. Logging in to a provider never adds it to a chain.
+- Login, permission and bad-request errors, refusals and cancellations stop the chain. Pi doesn't hop to another provider to get around them.
+- Each session remembers where its chain is, even after `/reload`, a resumed session or compaction.
+- You build and edit chains in the [`/chain` overlay](docs/chain-manager.md), or in one JSON file.
+
+Chains apply to the main Pi session only. Picking a single model turns the chain off, and subagents don't use your chain. If you use [pi-subagents](https://github.com/howarewoo/pi-subagents), give its profiles their own fallback chains ([how the two fit together](docs/coexistence.md)).
+
+## Project status
+
+Actively maintained, with releases below 1.0 (the npm badge shows the current version). It needs Node 22.19 or newer and is tested with Pi 1.6.0. Other Pi versions haven't been tested. Before 1.0, a minor release can change behavior, so read the [update notes](docs/installation.md#updates-and-rollback) before upgrading.
+
+## Install
 
 ```sh
 pi install npm:@howarewoo/pi-model-chain
 ```
 
-The first npm release is still pending. Until it is published, install from Git with
-`pi install git:github.com/howarewoo/pi-model-chain`, or from a local checkout with
-`pi install /absolute/path/to/pi-model-chain`. Use only one source: when switching
-between npm, Git or a local checkout, remove the previously registered source first so
-Pi does not load the extension twice.
-
-Pi supplies the SDK dependencies; an operator installation does not need this
-repository's development dependencies. Extensions execute with Pi's operating-system
-permissions: review the source before installing.
+To install from Git instead, run `pi install git:github.com/howarewoo/pi-model-chain`. Install from only one source, or Pi loads the extension twice. Extensions run with the same system permissions as Pi, so review the source before installing. See [installation and updates](docs/installation.md) for updates, pinned versions and rollback.
 
 ## Quick start
 
-1. Configure native provider authentication with Pi's `/login` or existing provider
-   configuration. This extension does not provision accounts, copy credentials,
-   discover new destinations, or read project-local chain configuration.
-2. Run **`/chain`**, press `^N`, name the chain and add steps from the model picker
-   (see [Manage chains](#manage-chains-with-chain)). Or create
-   **`~/.pi/agent/model-chain.json`** yourself (or `model-chain.json` in the agent
-   directory selected by `PI_CODING_AGENT_DIR`), replacing these illustrative IDs with
-   exact physical model IDs from your Pi catalogue:
+Log in to the providers you want to use with Pi's `/login` command, then find their exact model IDs with `pi --list-models`.
 
-   ```json
-   {
-     "version": 1,
-     "chains": {
-       "work": [
-         { "provider": "anthropic", "model": "claude-sonnet-4-5", "effort": "high" },
-         { "provider": "openai", "model": "gpt-4.1", "effort": "off" }
-       ]
-     }
-   }
-   ```
+Create `~/.pi/agent/model-chain.json` with your chain. Replace these example IDs with yours:
 
-   **Listing a provider authorizes sending the conversation to it.** Cross-provider
-   routing is never inferred from your credentials or catalogue. Choose only
-   destinations you permit to receive that data.
-
-3. Select **`chain/work`** in `/chain` or `/model` (after `/reload` if you edited the
-   file by hand). In print mode, use `pi --model chain/work -p 'your request'`.
-   No `settings.json` changes are required: chains work with Pi's default retry settings
-   and any `retry.enabled` or `retry.maxRetries` configuration. `retry.baseDelayMs` and
-   `retry.maxAgentDelayMs` control backoff timing (defaults are 2-second exponential
-   backoff and a 60-second cap). Keep `retry.provider.maxRetries` at `0` (Pi's default)
-   so provider-level retries do not run before chain failover; the extension warns if it
-   is non-zero and never modifies your settings.
-4. Use `/chain-status` to see each step marked active, failed over, skipped or
-   exhausted, the retry budget used, and any diagnostics or warnings. In interactive
-   mode, the footer status also tracks the active model live as
-   `<provider>/<model> Chain-<name> <effort>` (with retry, step, exhausted or
-   changed state when applicable) and clears when a physical model is selected.
-   If a backup takes over, subsequent successful turns continue using that backup.
-5. When Pi is idle, run `/chain-reset` to return **only the selected chain on
-   the current branch** to its first available authorized target. Reset does not
-   send a model request, clear conversation history or reset other sessions.
-
-Hand edits to the config file take effect on reload; `/chain` saves take effect
-immediately. If an existing chain changes, its persisted fingerprint prevents silently
-reinterpreting an old index: the chain shows `changed · reset required` until you
-reset it after reviewing the new destinations.
-
-## Manage chains with /chain
-
-![The /chain overlay listing three chains with status badges and ordered steps, above the model picker with a provider column, aligned context, cost, vision and auth columns and the inline effort strip.](docs/images/chain-manager.svg)
-
-_The `/chain` overlay and model picker, rendered from the production components with
-synthetic data. Not a terminal screenshot._
-
-`/chain` opens a framed, keyboard-driven overlay. The search box has focus: type to filter
-chains by name or model. Each row shows the chain's badges (`selected`, `ready`,
-`retry 1/2`, `on step 2`, `N skipped`, `exhausted` or `changed`) and its ordered steps as
-`provider/model:effort → …`, with the active step highlighted.
-
-| Key           | List                                | Chain editor                             |
-| ------------- | ----------------------------------- | ---------------------------------------- |
-| `↑`/`↓`       | Move                                | Move between the name and steps          |
-| `Enter`       | Select the chain for this session   | Replace the step via the model picker    |
-| `^E` / `^N`   | Edit the chain / create a chain     | `^N` (or `a`) adds a step after this one |
-| `Shift+↑`/`↓` |                                     | Reorder the step                         |
-| `x`/`Delete`  |                                     | Remove the step                          |
-| `^R`          | Reset the chain on this idle branch |                                          |
-| `^D`          | Delete the chain (asks to confirm)  |                                          |
-| `^S`          |                                     | Validate and save                        |
-| `Esc`         | Close                               | Back; asks again if edits are unsaved    |
-
-The **model picker** lists the same models as Pi's built-in `/model` picker: the models
-scoped for this session with `--models` or `enabledModels` (as `/scoped-models` shows), or,
-with no scope set, the models Pi has authentication for. Models and providers outside that
-set are hidden. A **Providers** column on the left lists `All` first, then each listed provider
-with its count of models matching the search; the search box and model rows on the right show
-only the selected provider's models. Rows show context window, price per million tokens, vision
-support and whether authentication is configured.
-
-| Key     | Model picker                                                         |
-| ------- | -------------------------------------------------------------------- |
-| `←`/`→` | Move between the provider column and the model list                  |
-| `↑`/`↓` | Move within the focused column (the model list follows the provider) |
-| Typing  | Edit the search; focus returns to the model list                     |
-| `Enter` | From Providers, go to the models; on a model, open the effort strip  |
-| `Esc`   | Close the effort strip, then leave the picker                        |
-
-Frames narrower than 72 columns show the provider as a single `Provider` row above the search,
-with the same keys.
-
-`Enter` on a model opens an inline strip with only the efforts that model supports and the
-session scope allows (a scope such as `anthropic/*:high` offers only `high`); `←`/`→` choose one
-and `Enter` adds it. Virtual models, models with unknown limits and targets already in the
-chain stay visible with an inline reason but cannot be picked. A scoped model without
-configured authentication can be added but is skipped at runtime until you log in. A chain
-that already has a step outside the session scope still appears in the list, and the editor
-marks that step so you can fix it; the chain is refused before dispatch until you do. `Esc` closes the strip, then returns to the editor with your edits intact.
-
-Saving validates the chain (name, at least one step, no duplicates or virtual targets),
-writes `model-chain.json` atomically with owner-only permissions, and registers or removes
-the `chain/<name>` models without a reload. It refuses to overwrite a file that changed on
-disk since `/chain` opened it, and saving, resetting or deleting requires an idle session.
-The selected chain cannot be renamed or deleted; select another model first. Deleting the
-last chain removes the file. Outside the interactive UI, `/chain` prints the same summary
-as `/chain-status`.
-
-## Configuration reference
-
-| Field               | Contract                                                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `version`           | Required, exactly `1`.                                                                                                            |
-| `chains`            | Nonempty object of named, nonempty, ordered target arrays.                                                                        |
-| Chain name          | Starts with an ASCII letter/digit, followed by letters/digits, `_` or `-`. Appears as `chain/<name>`.                             |
-| `provider`, `model` | Required exact catalogue IDs. Whitespace and glob-pattern characters are rejected. No automatic discovery of backups.             |
-| `effort`            | Required: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; must be supported by that physical model without clamping. |
-
-Unknown fields (including secrets), duplicate exact provider/model/effort targets,
-virtual targets and unsupported efforts are errors. Missing catalogue entries and
-absent configured authentication are availability skips, **not** new permissions.
-The complete chain is checked against session model/effort scopes before dispatch,
-even if an earlier target is missing. If you use `--models` or `enabledModels`,
-include every chain target with its allowed effort; scoping only the virtual model
-does not authorize its physical targets. A revoked scope stops recovery rather
-than skipping to another provider.
-
-## Recovery and safety boundaries
-
-- **Eligible failures:** Pi's public transient provider/transport classifier,
-  interrupted connections/streams, and recognized quota/billing/credit-limit
-  errors. Error text is provider-dependent; unrecognized failures stop instead
-  of guessing. Authentication/permission failures, invalid requests, refusals,
-  cancellation and tool failures do not trigger fallback.
-- **Exact retry budget:** state tracks failures by physical target, not Pi's
-  native retry counter. Each target gets one initial attempt plus two retries
-  regardless of `retry.enabled` or `retry.maxRetries`. Before a native retry
-  could exceed three attempts, the virtual router advances. Quota failures,
-  disabled native retries and remaining-budget recovery use the public
-  settlement boundary. This also gives a backup its full two retries when a
-  native counter carries over from a primary. If `retry.provider.maxRetries` is
-  set above `0`, the extension warns once and reports it in `/chain-status`
-  without modifying your settings.
-- **Backoff and cancellation:** boundary recovery defers backoff to the next router
-  invocation, where Pi provides a live abort signal. Escape/abort cancels that
-  wait; it cannot dispatch another provider request or automatically resume it.
-- **Stream/tool safety:** failed drafts remain in raw session history but supported
-  `context_edit` entries omit them from future model projection. Incomplete calls
-  in a failed draft do not execute; earlier completed tool/result pairs remain and
-  their SDK invocations are not replayed. A model may independently request a
-  similar action later: this is not an exactly-once external-side-effect guarantee.
-- **Capabilities:** unsupported image targets are skipped rather than receiving
-  fallback-generated placeholders. A warning records differing context/image
-  capabilities. Pi still owns native image preparation and context compaction;
-  the extension does not truncate messages to force a fallback to fit. Context
-  overflow remains Pi's native recovery, not a fallback-eligible failure.
-- **Persistence:** branch-local custom entries store target identity, a chain
-  fingerprint, failure count, skips and the exhaustion latch. State survives
-  reload, resume, compaction and tree navigation. Sessions and chains do not share
-  a health cache. Selecting a physical model suspends this controller.
-- **Exhaustion:** no wraparound or provider calls on later requests until manual
-  reset. Status retains the final attempted target and failure count.
-- **Direct requests:** compaction/summary and third-party direct registry calls use
-  the active target read-only. They do not retry/advance the chain, initialize its
-  state, or modify its counters. An unavailable active target stops a direct call.
-- **Cost and attribution:** retries may incur charges. Native assistant messages
-  retain physical provider/model/effort and known usage. Missing failed-attempt
-  usage is unknown, not measured zero cost. Status never dumps prompts or keys;
-  normal Pi transcript storage still contains the conversation and raw failures.
-
-The `/chain`, `/chain-status` and `/chain-reset` commands have no model-facing tool
-counterpart. Reset rejects while busy. In non-UI modes, status and reset print the same
-readable summary as a custom message (with structured `details`); route decisions,
-capability warnings and raw errors are available in session entries.
-
-## Troubleshooting
-
-| Symptom                                 | Check and recovery                                                                                                                                                                            |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `chain/…` entries or commands        | Create a chain in `/chain`, or check the hand-edited config's JSON/version/field names, then `/reload`. An invalid config stops the extension from loading; check Pi's extension-load errors. |
-| Provider retry warning                  | Set `retry.provider.maxRetries` to `0` (Pi's default) if you want exact per-target retry budgets; the extension never modifies your settings.                                                 |
-| Unauthorized scoped target              | Correct the explicit physical model/effort scopes; adding credentials alone does not authorize a destination.                                                                                 |
-| Unsupported effort or virtual target    | Use exact supported physical selections. These errors are never availability skips.                                                                                                           |
-| Skipped targets / no available target   | Check catalogue IDs, native provider authentication and image support; then reset when appropriate. A runtime 401/403 is terminal, not an availability skip.                                  |
-| Chain changed or exhausted              | Review `/chain-status`; reset the selected idle branch explicitly. Reset does not test provider health.                                                                                       |
-| Unexpected provider text stops recovery | Keep the raw error for diagnosis. Do not recategorize an auth/permission/request failure as transient merely to get another model call.                                                       |
-
-## Updates and rollback
-
-Let Pi finish its current turn before updating, then restart Pi or run `/reload`.
-Routing state is stored per session branch and survives the restart. There is no
-extension-owned auto-updater.
-
-```sh
-# Update an unpinned npm installation
-pi update npm:@howarewoo/pi-model-chain
-
-# Or update all installed extension packages
-pi update --extensions
+```json
+{
+  "version": 1,
+  "chains": {
+    "work": [
+      { "provider": "anthropic", "model": "claude-sonnet-4-5", "effort": "high" },
+      { "provider": "openai", "model": "gpt-4.1", "effort": "off" }
+    ]
+  }
+}
 ```
 
-Plain `pi update` updates Pi itself, not installed extension packages. For a Git installation,
-use `pi update git:github.com/howarewoo/pi-model-chain`, matching the source you registered.
-An unpinned Git source tracks the repository's default branch, including unreleased commits.
+Every provider you list can receive your conversation, so list only ones you trust with it.
 
-For a reproducible npm installation or rollback, select an exact published version:
+Run a request through the chain:
 
 ```sh
-pi install npm:@howarewoo/pi-model-chain@0.1.0
+pi --model chain/work -p "Say hello in five words"
 ```
 
-For Git, select a published tag, for example
-`pi install git:github.com/howarewoo/pi-model-chain@v0.1.0`.
-Exact npm versions and Git tags stay pinned; updating does not advance them to the next release.
-Install a different version explicitly to change the pin. These examples work once `0.1.0`
-is actually published.
+Pi answers with the first model. If that model fails three times in a row with an outage or quota error, Pi sends the request to the next one. In an interactive session, pick `chain/work` in `/model` or `/chain` (run `/reload` first if Pi was already open) and use these commands:
 
-[CHANGELOG.md](CHANGELOG.md) lists user-facing changes and migrations. Pi shows new package
-changelog entries on the next fresh launch after a version increase. See the
-[maintainer release guide](docs/releases.md) for publishing and recovery.
+```text
+/chain         # create, edit, select and delete chains
+/chain-status  # show each step, the retries used and any warnings
+/chain-reset   # go back to the first model in the selected chain
+```
+
+The [usage guide](docs/usage.md) covers the full setup, including the retry settings to leave alone.
 
 ## Documentation
 
-- [Release guide](docs/releases.md): release preparation, owner setup, publication and recovery.
-- [Changelog](CHANGELOG.md): user-facing changes and migrations.
-- [Security policy](SECURITY.md): vulnerability reporting and trust boundaries.
-- [Contribution rules](https://github.com/howarewoo/pi-model-chain/blob/main/AGENTS.md): PR titles and changelog policy.
-
-## Local development
-
-From a source checkout:
-
-```sh
-npm ci --ignore-scripts
-npm run lint
-npm run format:check
-npm run typecheck
-npm test
-npm pack --dry-run
-npm run test:package
-npm run release:check
-```
-
-`npm run check` runs lint, formatting, typecheck and tests. Tests run with Node's native
-`node --test` runner and type stripping; there is no build step. Oxlint checks correctness
-rules and warnings fail the lint command. Run `npm run lint:fix` for safe lint fixes and
-`npm run format` to apply Oxfmt formatting. Formatting skips the generated lockfile.
-
-Dependencies are pinned to the authoritative registry's Pi 1.6.0 baseline. The SDK
-suite uses scripted in-process providers and temporary agent/session directories,
-not live models. It retains the original mixed quota→transient regression that
-previously dispatched A/A/A/A/B; it now asserts A/A/A/B. Additional cases cover
-backup-counter carryover through final exhaustion, success reset, terminal errors,
-queued steering/follow-ups, stream/tool safety, scopes/auth/capabilities, cancellation,
-branch reset/reload/compaction/resume, concurrent isolation and read-only direct
-calls. The image-modality test disables native auto-resize to isolate routing.
-
-`npm run test:package` packs the tarball (or tests one you pass), checks every entry
-against a file allowlist, installs it cache-first (`--prefer-offline`) without host SDK
-copies, and checks the manifest and packed README links. It then loads the package in the
-pinned Pi 1.6.0. With a temporary chain configured, it checks the registered commands, runs
-real Pi `install` and `/model` catalogue discovery, and observes A/A/A/B recovery through
-the installed package in offline print mode. It prefers the npm cache but may fetch registry
-metadata. It changes only temporary settings and cleans them up. The smaller
-`test/recovery-probe.ts` is a public-API checkpoint fixture, not shipped runtime.
-
-## Coexistence with pi-subagents
-
-This extension and [`@howarewoo/pi-subagents`](https://github.com/howarewoo/pi-subagents)
-can be installed together, and neither changes the other's chain behavior:
-
-- **Separate scopes.** This extension routes only the session it is loaded into, the main
-  Pi session. Subagent children run in their own SDK sessions, which load no installed
-  extensions and never route through virtual models. This extension therefore never
-  retries, switches or records state for a child, and a child's failures never count
-  against the parent chain's budget or position.
-- **Separate configuration, state and commands.** This extension reads only
-  `model-chain.json`, stores only `model-chain.*` session entries, registers only the
-  `chain/<name>` virtual models and the `/chain`, `/chain-status` and `/chain-reset`
-  commands, and registers no tools. Child profile chains come from pi-subagents'
-  `delegation.json` and belong to pi-subagents. Neither extension uses global state or the
-  other's event-bus channels. This extension never switches models while routing; it calls
-  `setModel` only on the main session, and only when you select a chain in `/chain`.
-- **Separate resets.** `/chain-reset` never changes a child's chain, and pi-subagents'
-  `delegate_coordinate reset_fallback` never changes the parent chain. Neither sends a
-  model request.
-
-While the parent has `chain/<name>` selected, pi-subagents rejects a child that would
-inherit the parent's model, because it does not route virtual parent models. Give that
-profile its own `model` or `fallback` chain.
-
-`test/coexistence.test.ts` runs in `npm test` and CI. It loads the real pi-subagents
-extension, pinned as a test-only devDependency (the package itself has no dependency on
-it), through Pi's public extension loader. It runs each extension alone and then both
-together with the same controlled providers, and asserts that:
-
-- The parent's A/A/A/B recovery is identical.
-- The child's C/C/C/D profile-chain switches and its fallback snapshot are identical.
-- The child transcript contains no `model-chain` state.
-- Each reset affects only its own chain.
-
-To test a local pi-subagents checkout (with its dependencies installed) instead, run
-`PI_SUBAGENTS_CHECKOUT=/absolute/path/to/pi-subagents npm run test:coexistence`. This
-was verified against pi-subagents `main` at `13d8151`. Provider streams are controlled,
-not paid calls.
+| Topic                                                                                 | What it covers                                                   |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [Using model chains](docs/usage.md)                                                   | Full setup, retry settings, status, reset and changed chains     |
+| [Manage chains with /chain](docs/chain-manager.md)                                    | The overlay, its keys, the model picker and saving               |
+| [Configuration reference](docs/configuration.md)                                      | Every field in `model-chain.json` and how model scopes apply     |
+| [Recovery and safety](docs/recovery.md)                                               | Which failures switch models, retry counting, cost and tool runs |
+| [Troubleshooting](docs/troubleshooting.md)                                            | Common problems and how to fix them                              |
+| [Installation and updates](docs/installation.md)                                      | Host support, install sources, updates, pinning and rollback     |
+| [Coexistence with pi-subagents](docs/coexistence.md)                                  | Running both extensions together                                 |
+| [Local development](docs/development.md)                                              | Checks, tests and the package test                               |
+| [Releases](docs/releases.md) and [changelog](CHANGELOG.md)                            | Publishing process and user-facing changes                       |
+| [Security policy](SECURITY.md)                                                        | Reporting vulnerabilities and trust boundaries                   |
+| [Contribution rules](https://github.com/howarewoo/pi-model-chain/blob/main/AGENTS.md) | PR titles and changelog policy                                   |
 
 ## License
 
